@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Stock Scanner (Multi-Page Invoice Scan + Manual)</title>
+<title>Stock Scanner (Multi-Page Scan + Manual)</title>
 <style>
 :root{--bg:#eef1f4;--card:#fff;--tx:#17212b;--mu:#5e6b78;--bd:#d5dbe1;--ac:#0f4c5c;--on:#fff;--hi:#e0a100;--dg:#b3261e;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12181e;--card:#1a232b;--tx:#e8edf2;--mu:#98a5b1;--bd:#2b3743;--ac:#5cc1d6;--on:#06222a;--hi:#f0b429;--dg:#ff8a80}}
@@ -135,6 +135,11 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
 <script>
+window.addEventListener('error', e => {
+  const m = document.getElementById('msg');
+  if (m) m.textContent = 'Error: ' + (e.message || e);
+});
+
 window.addEventListener('DOMContentLoaded', () => {
   const $ = id => document.getElementById(id);
   let items = [];
@@ -149,7 +154,7 @@ window.addEventListener('DOMContentLoaded', () => {
     try {
       const res = await fetch('/api/stock');
       if (res.ok) { items = await res.json(); renderStock(); }
-    } catch (e) { msg('Failed to load stock from server.'); }
+    } catch (e) { console.error(e); }
   }
 
   function tab(n) {
@@ -160,6 +165,7 @@ window.addEventListener('DOMContentLoaded', () => {
     if (t2) t2.setAttribute('aria-selected', n === 2);
     if (n === 2) loadStock();
   }
+
   if ($('t1'))$('t1').onclick = () => tab(1);
   if ($('t2'))$('t2').onclick = () => tab(2);
 
@@ -198,9 +204,12 @@ window.addEventListener('DOMContentLoaded', () => {
     if ($('fUnit'))$('fUnit').value = o.unit || 'Pcs';
     if ($('fRate'))$('fRate').value = o.rate || '';
     if ($('fQty'))$('fQty').value = o.qty || 1;
-    if ($('dlg'))$('dlg').showModal();
+    const dlg = $('dlg');
+    if (dlg && typeof dlg.showModal === 'function') dlg.showModal();
   }
-  if ($('cancel')) $('cancel').onclick = () =>$('dlg').close();
+
+  if ($('cancel')) $('cancel').onclick = () => { const dlg =$('dlg'); if (dlg) dlg.close(); };
+
   if ($('save'))$('save').onclick = async () => {
     const part = $('fPart')?.value.trim() || '';
     if (!part) { alert('Enter a part number.'); return; }
@@ -218,15 +227,24 @@ window.addEventListener('DOMContentLoaded', () => {
         rack: $('fRack')?.value.trim() || ''
       }]
     };
-    const res = await fetch('/api/inward', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    if (res.ok) { $('dlg').close(); loadStock(); tab(2); } else { alert('Save failed.'); }
+    try {
+      const res = await fetch('/api/inward', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      if (res.ok) { 
+        const dlg = $('dlg'); if (dlg) dlg.close(); 
+        loadStock(); tab(2); 
+      } else { alert('Save failed.'); }
+    } catch(err) { alert('Network error.'); }
   };
+
   if ($('addBtn'))$('addBtn').onclick = () => openForm({ qty: 1, unit: 'Pcs' });
 
-  // Multi-page invoice processing with strict '-' rule for Part Number & Description
-  if ($('photoBtn') && $('file')) {$('photoBtn').onclick = () => $('file').click();$('file').onchange = async e => {
+  const photoBtn = $('photoBtn');
+  const fileInput = $('file');
+  if (photoBtn && fileInput) {
+    photoBtn.onclick = () => fileInput.click();
+    fileInput.onchange = async e => {
       const files = Array.from(e.target.files || []);
-      $('file').value = '';
+      fileInput.value = '';
       if (!files.length) return;
 
       const progressWrap = $('ocrProgressWrap');
@@ -238,7 +256,7 @@ window.addEventListener('DOMContentLoaded', () => {
           const file = files[i];
           const pct = Math.round(((i + 1) / files.length) * 100);
           if ($('ocrBar'))$('ocrBar').style.width = pct + '%';
-          if ($('ocrStatusText'))$('ocrStatusText').textContent = `Processing page ${i + 1} of ${files.length} (Multi-Page OCR)...`;
+          if ($('ocrStatusText'))$('ocrStatusText').textContent = `Processing page ${i + 1} of ${files.length}...`;
 
           const img = new Image();
           img.src = URL.createObjectURL(file);
@@ -251,13 +269,6 @@ window.addEventListener('DOMContentLoaded', () => {
           const text = (ret.data.text || '');
           const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
           
-          let currentPart = '';
-          let currentDesc = '';
-          let currentHsn = '';
-          let currentQty = 1;
-          let currentUnit = 'PC';
-          let currentRate = 0;
-
           lines.forEach(line => {
             const upper = line.toUpperCase();
             if (
@@ -269,43 +280,30 @@ window.addEventListener('DOMContentLoaded', () => {
               return;
             }
 
-            // Check if line contains a part number format starting with MH
             if (line.includes('MH') || /^[A-Z0-9]{4,}/.test(line)) {
+              let part = line;
+              let desc = 'Spare Part';
               if (line.includes('-')) {
                 const parts = line.split('-');
-                currentPart = parts[0].trim();
-                currentDesc = parts.slice(1).join('-').trim();
-              } else {
-                currentPart = line.trim();
-                currentDesc = 'Spare Part';
+                part = parts[0].trim();
+                desc = parts.slice(1).join('-').trim();
               }
               pendingScannedItems.push({
-                part: currentPart,
-                desc: currentDesc,
-                hsn: currentHsn,
-                qty: currentQty,
-                unit: currentUnit,
-                rate: currentRate,
+                part: part,
+                desc: desc,
+                hsn: '',
+                qty: 1,
+                unit: 'PC',
+                rate: 0,
                 rack: ''
               });
-            } else if (/^\d{8}$/.test(line)) {
-              // HSN Code 8 digits
-              if (pendingScannedItems.length > 0) {
-                pendingScannedItems[pendingScannedItems.length - 1].hsn = line;
-              }
-            } else if (/^\d+\.\d{3}$/.test(line) \vert{}\vert{} /^\d+$/.test(line)) {
-              // Quantity
-              if (pendingScannedItems.length > 0 && pendingScannedItems[pendingScannedItems.length - 1].qty === 1) {
-                pendingScannedItems[pendingScannedItems.length - 1].qty = num(line);
-              }
             }
           });
         }
 
-        setTimeout(() => { if (progressWrap) progressWrap.hidden = true; }, 400);
-
+        if (progressWrap) progressWrap.hidden = true;
         openReviewModal(pendingScannedItems);
-        msg(`Successfully processed ${files.length} page(s) across all items!`);
+        msg(`Successfully processed ${files.length} page(s)!`);
       } catch (err) {
         if (progressWrap) progressWrap.hidden = true;
         alert('OCR Error: ' + err.message);
@@ -339,9 +337,10 @@ window.addEventListener('DOMContentLoaded', () => {
       html += '<div><button type="button" class="btn del" style="padding:6px 10px;font-size:12px;margin-top:16px" onclick="window.removeScannedRow(' + idx + ')">✕</button></div>';
       html += '</div>';
     });
-    if (container) container.innerHTML = html || '<div class="empty">No items detected. Please check image clarity or add manually.</div>';
+    if (container) container.innerHTML = html || '<div class="empty">No items detected.</div>';
     updateReviewTotal();
-    if ($('reviewDlg'))$('reviewDlg').showModal();
+    const revDlg = $('reviewDlg');
+    if (revDlg && typeof revDlg.showModal === 'function') revDlg.showModal();
   }
 
   window.removeScannedRow = idx => {
@@ -349,7 +348,7 @@ window.addEventListener('DOMContentLoaded', () => {
     openReviewModal(pendingScannedItems);
   };
 
-  if ($('cancelScanBtn')) $('cancelScanBtn').onclick = () =>$('reviewDlg').close();
+  if ($('cancelScanBtn')) $('cancelScanBtn').onclick = () => { const revDlg =$('reviewDlg'); if (revDlg) revDlg.close(); };
 
   if ($('confirmScanBtn'))$('confirmScanBtn').onclick = async () => {
     const confirmedItems = [];
@@ -376,20 +375,23 @@ window.addEventListener('DOMContentLoaded', () => {
       items: confirmedItems
     };
 
-    const res = await fetch('/api/inward', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
+    try {
+      const res = await fetch('/api/inward', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
 
-    if (res.ok) {
-      $('reviewDlg').close();
-      msg('Successfully saved to database!');
-      loadStock();
-      tab(2);
-    } else {
-      alert('Failed to save items.');
-    }
+      if (res.ok) {
+        const revDlg = $('reviewDlg');
+        if (revDlg) revDlg.close();
+        msg('Successfully saved to database!');
+        loadStock();
+        tab(2);
+      } else {
+        alert('Failed to save items.');
+      }
+    } catch(err) { alert('Network error.'); }
   };
 
   if ($('exp'))$('exp').onclick = async () => {
