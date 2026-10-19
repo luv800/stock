@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Stock Scanner (Invoice Scanning + Manual + Excel)</title>
+<title>Stock Scanner (Invoice Scan + Manual + Excel)</title>
 <style>
 :root{--bg:#eef1f4;--card:#fff;--tx:#17212b;--mu:#5e6b78;--bd:#d5dbe1;--ac:#0f4c5c;--on:#fff;--hi:#e0a100;--dg:#b3261e;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12181e;--card:#1a232b;--tx:#e8edf2;--mu:#98a5b1;--bd:#2b3743;--ac:#5cc1d6;--on:#06222a;--hi:#f0b429;--dg:#ff8a80}}
@@ -227,30 +227,6 @@ window.addEventListener('DOMContentLoaded', () => {
   };
   $('addBtn').onclick = () => openForm({ qty: 1, unit: 'Pcs', hsn: '', rack: '' });
 
-  // OCR scanning setup
-  const INVOICE_PAGE_1_ITEMS = [
-    { part: 'MH40939D3', desc: 'OUTER AIR ELEMENT - 4445/4385', hsn: '84213990', qty: 6, unit: 'Pcs', rate: 1097.00, rack: '' },
-    { part: 'MH40939D4', desc: 'SAFETY AIR ELEMENT', hsn: '84312010', qty: 6, unit: 'Pcs', rate: 867.00, rack: '' },
-    { part: 'MH40939O15', desc: 'FUEL FILTER PRIM (Mico F002H20286)', hsn: '84312010', qty: 6, unit: 'Pcs', rate: 275.00, rack: '' },
-    { part: 'MH40939O16', desc: 'FUEL FILTER SEC', hsn: '84213990', qty: 6, unit: 'Pcs', rate: 215.00, rack: '' }
-  ];
-
-  const INVOICE_PAGE_2_ITEMS = [
-    { part: 'MH14972900', desc: 'HEX. JAM NUT 3/8"-24UNF', hsn: '73181600', qty: 15, unit: 'Pcs', rate: 12.76, rack: '' },
-    { part: 'MH40970', desc: 'TUBE RH (ibt)', hsn: '40129020', qty: 2, unit: 'Pcs', rate: 1076.28, rack: '' },
-    { part: 'MH12969', desc: 'K1-SHORT ROLLER TYPE MICRO SWITCH', hsn: '85361010', qty: 6, unit: 'Pcs', rate: 763.48, rack: '' },
-    { part: 'MH11829', desc: 'REVERSE HORN', hsn: '85041090', qty: 3, unit: 'Pcs', rate: 310.48, rack: '' },
-    { part: 'MH799223182', desc: 'STEERING KNUCKLE LH M/C(EVX30)', hsn: '84312010', qty: 2, unit: 'Pcs', rate: 9305.56, rack: '' },
-    { part: 'MH799223199', desc: 'STNG KNUCKLE M/C R.H (EVX 30)', hsn: '84312010', qty: 1, unit: 'Pcs', rate: 9305.83, rack: '' },
-    { part: 'MH10202', desc: 'AIR INTAKE HOSE(S4)', hsn: '40092200', qty: 1, unit: 'Pcs', rate: 705.27, rack: '' },
-    { part: 'MH799812133', desc: 'GAS SPRING LATCH TYPE (KAT)', hsn: '73209090', qty: 1, unit: 'Pcs', rate: 1339.98, rack: '' },
-    { part: 'MH026258600', desc: 'CHOKE CABLE -1410 MM L', hsn: '85441990', qty: 5, unit: 'Pcs', rate: 371.50, rack: '' },
-    { part: 'MH02654408', desc: 'ELEMENT, LUB OIL FILTER', hsn: '84312010', qty: 8, unit: 'Pcs', rate: 409.50, rack: '' },
-    { part: 'MH42323', desc: 'HEAD / WORK LIGHT 55W 12vdc(HL-563)', hsn: '84312010', qty: 3, unit: 'Pcs', rate: 742.09, rack: '' },
-    { part: 'MH4214520', desc: 'Bolt-83042110022', hsn: '84312010', qty: 24, unit: 'Pcs', rate: 666.67, rack: '' },
-    { part: 'MH4214523', desc: 'Hub nut-83042110023', hsn: '73181600', qty: 24, unit: 'Pcs', rate: 375.85, rack: '' }
-  ];
-
   function prepareInvoiceImage(img) {
     return new Promise((resolve) => {
       const canvas = document.createElement('canvas');
@@ -301,28 +277,33 @@ window.addEventListener('DOMContentLoaded', () => {
         const ret = await worker.recognize(processedCanvas);
         await worker.terminate();
 
-        const text = (ret.data.text || '').toUpperCase();
+        const text = (ret.data.text || '');
+        const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
         
-        if (text.includes('MH40939D3') || text.includes('OUTER AIR ELEMENT')) {
-          pendingScannedItems.push(...INVOICE_PAGE_1_ITEMS);
-        } else if (text.includes('MH14972900') || text.includes('HEX. JAM NUT') || text.includes('73181600')) {
-          pendingScannedItems.push(...INVOICE_PAGE_2_ITEMS);
-        } else {
-          if (idx === 0 && totalFiles === 1) {
-            pendingScannedItems.push(...INVOICE_PAGE_1_ITEMS);
-          } else {
-            pendingScannedItems.push(...INVOICE_PAGE_2_ITEMS);
+        // Dynamic line parsing from extracted OCR text
+        lines.forEach(line => {
+          // Basic heuristic to parse item lines if they contain alphanumeric codes and numbers
+          const parts = line.split(/\s+/);
+          if (parts.length >= 3) {
+            const possiblePart = parts[0];
+            if (possiblePart.length >= 4 && /[A-Z0-9]/.test(possiblePart)) {
+              pendingScannedItems.push({
+                part: possiblePart,
+                desc: parts.slice(1, parts.length - 2).join(' ') || 'Scanned Item',
+                hsn: '',
+                qty: 1,
+                unit: 'Pcs',
+                rate: 0,
+                rack: ''
+              });
+            }
           }
-        }
+        });
       }
 
       const uniqueMap = new Map();
       pendingScannedItems.forEach(item => uniqueMap.set(item.part, item));
       pendingScannedItems = Array.from(uniqueMap.values());
-
-      if (pendingScannedItems.length === 0) {
-        pendingScannedItems = JSON.parse(JSON.stringify(INVOICE_PAGE_1_ITEMS));
-      }
 
       $('ocrBar').style.width = '100%';
       setTimeout(() => { $('ocrProgressWrap').hidden = true; }, 400);
@@ -331,9 +312,8 @@ window.addEventListener('DOMContentLoaded', () => {
       msg(`Successfully scanned ${totalFiles} page(s). Please verify items.`);
     } catch (err) {
       $('ocrProgressWrap').hidden = true;
-      pendingScannedItems = JSON.parse(JSON.stringify(INVOICE_PAGE_2_ITEMS));
-      openReviewModal(pendingScannedItems);
-      msg('Loaded scanned invoice items for review.');
+      alert('OCR processing error: ' + err.message);
+      msg('Scan failed.');
     }
   };
 
@@ -367,7 +347,7 @@ window.addEventListener('DOMContentLoaded', () => {
       html += '</div>';
     });
 
-    container.innerHTML = html || '<div class="empty">No items detected.</div>';
+    container.innerHTML = html || '<div class="empty">No items detected. Please add items manually or check image clarity.</div>';
     window.updateReviewTotalCalc = updateReviewTotal;
     updateReviewTotal();
     $('reviewDlg').showModal();

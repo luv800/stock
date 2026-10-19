@@ -1,4 +1,3 @@
-// POST /api/inward  -> saves a confirmed inward transaction and updates stock atomically (D1 binding: DB)
 const J = (o, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { "Content-Type": "application/json" } });
 export async function onRequestPost({ request, env }) {
   if (!env.DB) return J({ error: "D1 database (binding DB) not connected" }, 500);
