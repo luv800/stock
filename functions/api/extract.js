@@ -12,21 +12,30 @@ Rules:
 export async function onRequestPost({ request, env }) {
   const h = { "Content-Type": "application/json" };
   if (!env.ANTHROPIC_API_KEY) return new Response(JSON.stringify({ error: "ANTHROPIC_API_KEY not set" }), { status: 500, headers: h });
-  const { image, media_type } = await request.json();
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-    body: JSON.stringify({
-      model: env.CLAUDE_MODEL || "claude-sonnet-5-5",
-      max_tokens: 4000,
-      messages: [{ role: "user", content: [
-        { type: "image", source: { type: "base64", media_type: media_type || "image/jpeg", data: image } },
-        { type: "text", text: PROMPT } ] }]
-    })
-  });
-  const d = await r.json();
-  if (!r.ok) return new Response(JSON.stringify({ error: d.error?.message || "API error" }), { status: 502, headers: h });
-  const txt = (d.content || []).map(c => c.text || "").join("").replace(/```json|```/g, "").trim();
-  try { JSON.parse(txt); } catch { return new Response(JSON.stringify({ error: "Unreadable response" }), { status: 502, headers: h }); }
-  return new Response(txt, { headers: h });
+  
+  try {
+    const { image, media_type } = await request.json();
+    if (!image) return new Response(JSON.stringify({ error: "No image provided" }), { status: 400, headers: h });
+
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify({
+        model: env.CLAUDE_MODEL || "claude-3-5-sonnet-20241022",
+        max_tokens: 4000,
+        messages: [{ role: "user", content: [
+          { type: "image", source: { type: "base64", media_type: media_type || "image/jpeg", data: image } },
+          { type: "text", text: PROMPT } ] }]
+      })
+    });
+    
+    const d = await r.json();
+    if (!r.ok) return new Response(JSON.stringify({ error: d.error?.message || "API error" }), { status: 502, headers: h });
+    
+    const txt = (d.content || []).map(c => c.text || "").join("").replace(/```json|```/g, "").trim();
+    const parsed = JSON.parse(txt);
+    return new Response(JSON.stringify(parsed), { headers: h });
+  } catch (err) {
+    return new Response(JSON.stringify({ error: "Extraction failed: " + err.message }), { status: 500, headers: h });
+  }
 }

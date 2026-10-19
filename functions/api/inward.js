@@ -14,11 +14,11 @@ export async function onRequestPost({ request, env }) {
   if (b.image) st.push(env.DB.prepare("INSERT INTO invoice_images(txn_no,data) VALUES(?,?)").bind(no, b.image));
   items.forEach((i, n) => {
     st.push(env.DB.prepare("INSERT INTO inward_items(txn_no,sno,part,description,hsn,qty,unit,rate,amount) VALUES(?,?,?,?,?,?,?,?,?)")
-      .bind(no, n + 1, i.part, i.desc, i.hsn, i.qty, i.unit, i.rate, i.amount));
+      .bind(no, n + 1, i.part, i.desc || '', i.hsn || '', i.qty, i.unit || 'Pcs', Number(i.rate) || 0, Number(i.qty) * (Number(i.rate) || 0)));
     st.push(env.DB.prepare(`INSERT INTO stock(part,description,hsn,unit,rate,qty,updated_at) VALUES(?,?,?,?,?,?,?)
       ON CONFLICT(part) DO UPDATE SET qty=qty+excluded.qty, description=excluded.description, hsn=excluded.hsn,
       unit=excluded.unit, rate=excluded.rate, updated_at=excluded.updated_at`)
-      .bind(i.part, i.desc, i.hsn, i.unit, i.rate, i.qty, now));
+      .bind(i.part, i.desc || '', i.hsn || '', i.unit || 'Pcs', Number(i.rate) || 0, i.qty, now));
   });
   try { await env.DB.batch(st); } catch (e) { return J({ error: "Save failed: " + e.message }, 500); }
   return J({ no, items });

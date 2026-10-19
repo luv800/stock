@@ -1,2 +1,10 @@
-   npx wrangler login
-   npx wrangler pages deploy Stock --project-name mangalamstock
+name = "mangalamstock"
+compatibility_date = "2024-01-01"
+
+[vars]
+CLAUDE_MODEL = "claude-3-5-sonnet-20241022"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "stock_db"
+database_id = "your-d1-database-id-here"
