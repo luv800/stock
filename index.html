@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Stock Scanner (Invoice Scan + Manual + Excel)</title>
+<title>Stock Scanner (Invoice Scan + Manual)</title>
 <style>
 :root{--bg:#eef1f4;--card:#fff;--tx:#17212b;--mu:#5e6b78;--bd:#d5dbe1;--ac:#0f4c5c;--on:#fff;--hi:#e0a100;--dg:#b3261e;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12181e;--card:#1a232b;--tx:#e8edf2;--mu:#98a5b1;--bd:#2b3743;--ac:#5cc1d6;--on:#06222a;--hi:#f0b429;--dg:#ff8a80}}
@@ -47,7 +47,7 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
 </head>
 <body>
 <main>
-<h1>Stock Scanner <span class="mu" style="font-weight:400">(Scan + Manual + Excel)</span></h1>
+<h1>Stock Scanner <span class="mu" style="font-weight:400">(Scan + Manual)</span></h1>
 <div class="tabs" role="tablist">
 <button id="t1" role="tab" aria-selected="true" type="button">Scan / Add</button>
 <button id="t2" role="tab" aria-selected="false" type="button">Stock List</button>
@@ -58,15 +58,13 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
 <div class="row">
 <button class="btn" id="photoBtn" type="button">📸 Scan Tax Invoice Photo(s)</button>
 <button class="btn alt" id="addBtn" type="button">+ Add by Hand</button>
-<button class="btn alt" id="impBtn" type="button">📂 Import Excel</button>
 </div>
 <input type="file" id="file" accept="image/*" multiple capture="environment" hidden>
-<input type="file" id="impFile" accept=".xlsx, .xls" hidden>
 <div id="ocrProgressWrap" hidden style="margin-top:12px">
 <div class="mu" id="ocrStatusText">Processing invoice OCR...</div>
 <div class="ocr-progress"><div id="ocrBar" class="ocr-bar"></div></div>
 </div>
-<div id="msg" class="mu" role="status" style="margin-top:10px">Ready. Snap or upload tax invoice photos, add by hand, or import Excel.</div>
+<div id="msg" class="mu" role="status" style="margin-top:10px">Ready. Snap or upload tax invoice photos, or add by hand.</div>
 </div>
 </section>
 
@@ -280,9 +278,7 @@ window.addEventListener('DOMContentLoaded', () => {
         const text = (ret.data.text || '');
         const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
         
-        // Dynamic line parsing from extracted OCR text
         lines.forEach(line => {
-          // Basic heuristic to parse item lines if they contain alphanumeric codes and numbers
           const parts = line.split(/\s+/);
           if (parts.length >= 3) {
             const possiblePart = parts[0];
@@ -402,60 +398,6 @@ window.addEventListener('DOMContentLoaded', () => {
       }
     } catch (e) {
       alert('Network error while saving confirmed items.');
-    }
-  };
-
-  $('impBtn').onclick = () => $('impFile').click();$('impFile').onchange = async e => {
-    const file = e.target.files[0];
-    $('impFile').value = '';
-    if (!file) return;
-
-    try {
-      const data = await file.arrayBuffer();
-      const wb = XLSX.read(data);
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const json = XLSX.utils.sheet_to_json(ws, { header: 1 });
-      const importedItems = [];
-
-      for (let i = 1; i < json.length; i++) {
-        const r = json[i];
-        if (!r[1] || r[1] === 'Total') continue;
-        importedItems.push({
-          part: String(r[1] || '').trim(),
-          desc: String(r[2] || '').trim(),
-          hsn: String(r[3] || '').trim(),
-          qty: num(r[4]) || 1,
-          unit: String(r[5] || 'Pcs').trim(),
-          rate: num(r[6]),
-          rack: String(r[8] || '').trim()
-        });
-      }
-
-      if (!importedItems.length) { alert('No valid items found in the Excel file.'); return; }
-
-      const payload = {
-        invoiceNo: 'EXCEL-IMP-' + Date.now(),
-        invoiceDate: new Date().toISOString().slice(0, 10),
-        invoiceTotal: importedItems.reduce((a, x) => a + (x.qty * x.rate), 0),
-        items: importedItems
-      };
-
-      const res = await fetch('/api/inward', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      if (res.ok) {
-        msg('Successfully imported ' + importedItems.length + ' items!');
-        loadStock();
-        tab(2);
-      } else {
-        const err = await res.json();
-        alert('Import save failed: ' + (err.error || 'Unknown error'));
-      }
-    } catch (err) {
-      alert('Could not parse Excel file: ' + err.message);
     }
   };
 
