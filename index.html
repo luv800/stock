@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Stock Scanner (Strict Item Scan + Manual)</title>
+<title>Stock Scanner (Multi-Page Invoice Scan + Manual)</title>
 <style>
 :root{--bg:#eef1f4;--card:#fff;--tx:#17212b;--mu:#5e6b78;--bd:#d5dbe1;--ac:#0f4c5c;--on:#fff;--hi:#e0a100;--dg:#b3261e;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12181e;--card:#1a232b;--tx:#e8edf2;--mu:#98a5b1;--bd:#2b3743;--ac:#5cc1d6;--on:#06222a;--hi:#f0b429;--dg:#ff8a80}}
@@ -47,7 +47,7 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
 </head>
 <body>
 <main>
-<h1>Stock Scanner <span class="mu" style="font-weight:400">(Strict Scan + Manual)</span></h1>
+<h1>Stock Scanner <span class="mu" style="font-weight:400">(Multi-Page Scan + Manual)</span></h1>
 <div class="tabs" role="tablist">
 <button id="t1" role="tab" aria-selected="true" type="button">Scan / Add</button>
 <button id="t2" role="tab" aria-selected="false" type="button">Stock List</button>
@@ -56,15 +56,15 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
 <section id="p1">
 <div class="card">
 <div class="row">
-<button class="btn" id="photoBtn" type="button">📸 Scan Invoice Page(s)</button>
+<button class="btn" id="photoBtn" type="button">📸 Scan Multi-Page Invoice(s)</button>
 <button class="btn alt" id="addBtn" type="button">+ Add by Hand</button>
 </div>
 <input type="file" id="file" accept="image/*" multiple capture="environment" hidden>
 <div id="ocrProgressWrap" hidden style="margin-top:12px">
-<div class="mu" id="ocrStatusText">Filtering item rows...</div>
+<div class="mu" id="ocrStatusText">Processing pages...</div>
 <div class="ocr-progress"><div id="ocrBar" class="ocr-bar" style="width:0%"></div></div>
 </div>
-<div id="msg" class="mu" role="status" style="margin-top:10px">Ready. Select invoice pages to scan.</div>
+<div id="msg" class="mu" role="status" style="margin-top:10px">Ready. Select multiple invoice pages to scan.</div>
 </div>
 </section>
 
@@ -120,9 +120,9 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
 
 <dialog id="reviewDlg">
 <h2 style="margin:0 0 4px;font-size:18px">Review Scanned Invoice Items</h2>
-<div class="mu" style="margin-bottom:8px">Verify extracted item rows below. Assign Rack locations before saving.</div>
+<div class="mu" style="margin-bottom:8px">Verify extracted details from all uploaded pages. Assign Rack locations before saving.</div>
 <div style="background:var(--bg);padding:8px 12px;border-radius:8px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
-<span class="mu" style="font-weight:600">Invoice Total Amount:</span>
+<span class="mu" style="font-weight:600">Calculated Invoice Total Amount:</span>
 <span id="reviewTotalAmount" style="font-size:18px;font-weight:700;color:var(--ac)">₹0.00</span>
 </div>
 <div id="reviewListContainer" style="max-height:55vh;overflow-y:auto;padding-right:4px"></div>
@@ -223,7 +223,7 @@ window.addEventListener('DOMContentLoaded', () => {
   };
   if ($('addBtn'))$('addBtn').onclick = () => openForm({ qty: 1, unit: 'Pcs' });
 
-  // Strict OCR scan processing (filters out headers, addresses, and non-item text)
+  // Multi-page invoice processing with strict '-' rule for Part Number & Description
   if ($('photoBtn') && $('file')) {$('photoBtn').onclick = () => $('file').click();$('file').onchange = async e => {
       const files = Array.from(e.target.files || []);
       $('file').value = '';
@@ -238,7 +238,7 @@ window.addEventListener('DOMContentLoaded', () => {
           const file = files[i];
           const pct = Math.round(((i + 1) / files.length) * 100);
           if ($('ocrBar'))$('ocrBar').style.width = pct + '%';
-          if ($('ocrStatusText'))$('ocrStatusText').textContent = `Filtering items on page ${i + 1} of ${files.length}...`;
+          if ($('ocrStatusText'))$('ocrStatusText').textContent = `Processing page ${i + 1} of ${files.length} (Multi-Page OCR)...`;
 
           const img = new Image();
           img.src = URL.createObjectURL(file);
@@ -251,49 +251,61 @@ window.addEventListener('DOMContentLoaded', () => {
           const text = (ret.data.text || '');
           const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
           
-          // Strict filtering for actual inventory parts (e.g. starting with MH or alphanumeric part codes)
+          let currentPart = '';
+          let currentDesc = '';
+          let currentHsn = '';
+          let currentQty = 1;
+          let currentUnit = 'PC';
+          let currentRate = 0;
+
           lines.forEach(line => {
             const upper = line.toUpperCase();
-            
-            // Ignore non-item metadata
             if (
               upper.includes('TAX') || upper.includes('INVOICE') || upper.includes('ADRES') || 
               upper.includes('GSTIN') || upper.includes('TOTAL') || upper.includes('DATE') || 
               upper.includes('PAGE') || upper.includes('STATE') || upper.includes('PAN') ||
-              upper.includes('DESCRIPTION') || upper.includes('HSN') || upper.includes('INDIA') ||
-              upper.includes('RATE') || upper.includes('AMOUNT') || upper.includes('PHONE') ||
-              upper.length < 5 || /^[0-9\s\W]+$/.test(line)
+              upper.includes('DESCRIPTION') || upper.includes('HSN') || upper.length < 3
             ) {
               return;
             }
 
-            const parts = line.split(/\s+/);
-            if (parts.length >= 2) {
-              const possiblePart = parts[0];
-              // Only accept valid part codes (e.g., starting with MH or containing alphanumeric codes >= 5 chars)
-              if (possiblePart.length >= 4 && /[A-Z0-9]{3,}/.test(possiblePart)) {
-                pendingScannedItems.push({
-                  part: possiblePart,
-                  desc: parts.slice(1).join(' ') || 'Spare Part',
-                  hsn: '',
-                  qty: 1,
-                  unit: 'Pcs',
-                  rate: 0,
-                  rack: ''
-                });
+            // Check if line contains a part number format starting with MH
+            if (line.includes('MH') || /^[A-Z0-9]{4,}/.test(line)) {
+              if (line.includes('-')) {
+                const parts = line.split('-');
+                currentPart = parts[0].trim();
+                currentDesc = parts.slice(1).join('-').trim();
+              } else {
+                currentPart = line.trim();
+                currentDesc = 'Spare Part';
+              }
+              pendingScannedItems.push({
+                part: currentPart,
+                desc: currentDesc,
+                hsn: currentHsn,
+                qty: currentQty,
+                unit: currentUnit,
+                rate: currentRate,
+                rack: ''
+              });
+            } else if (/^\d{8}$/.test(line)) {
+              // HSN Code 8 digits
+              if (pendingScannedItems.length > 0) {
+                pendingScannedItems[pendingScannedItems.length - 1].hsn = line;
+              }
+            } else if (/^\d+\.\d{3}$/.test(line) \vert{}\vert{} /^\d+$/.test(line)) {
+              // Quantity
+              if (pendingScannedItems.length > 0 && pendingScannedItems[pendingScannedItems.length - 1].qty === 1) {
+                pendingScannedItems[pendingScannedItems.length - 1].qty = num(line);
               }
             }
           });
         }
 
-        const uniqueMap = new Map();
-        pendingScannedItems.forEach(item => uniqueMap.set(item.part, item));
-        pendingScannedItems = Array.from(uniqueMap.values());
-
         setTimeout(() => { if (progressWrap) progressWrap.hidden = true; }, 400);
 
         openReviewModal(pendingScannedItems);
-        msg(`Successfully extracted ${pendingScannedItems.length} valid item(s)!`);
+        msg(`Successfully processed ${files.length} page(s) across all items!`);
       } catch (err) {
         if (progressWrap) progressWrap.hidden = true;
         alert('OCR Error: ' + err.message);
@@ -321,13 +333,13 @@ window.addEventListener('DOMContentLoaded', () => {
       html += '<div style="flex:1.8"><label style="font-size:11px">Description</label><input type="text" class="rev-desc" value="' + esc(item.desc) + '" style="padding:6px"></div>';
       html += '<div style="flex:0.9"><label style="font-size:11px">HSN</label><input type="text" class="rev-hsn" value="' + esc(item.hsn) + '" style="padding:6px"></div>';
       html += '<div style="flex:0.7"><label style="font-size:11px">Qty</label><input type="number" step="any" class="rev-qty" value="' + num(item.qty) + '" style="padding:6px" oninput="window.updateReviewTotalCalc()"></div>';
-      html += '<div style="flex:0.6"><label style="font-size:11px">Unit</label><input type="text" class="rev-unit" value="' + esc(item.unit || 'Pcs') + '" style="padding:6px"></div>';
+      html += '<div style="flex:0.6"><label style="font-size:11px">Unit</label><input type="text" class="rev-unit" value="' + esc(item.unit || 'PC') + '" style="padding:6px"></div>';
       html += '<div style="flex:0.9"><label style="font-size:11px">Rate</label><input type="number" step="any" class="rev-rate" value="' + num(item.rate) + '" style="padding:6px" oninput="window.updateReviewTotalCalc()"></div>';
       html += '<div style="flex:0.8"><label style="font-size:11px">Rack</label><input type="text" class="rev-rack" placeholder="A1" style="padding:6px"></div>';
       html += '<div><button type="button" class="btn del" style="padding:6px 10px;font-size:12px;margin-top:16px" onclick="window.removeScannedRow(' + idx + ')">✕</button></div>';
       html += '</div>';
     });
-    if (container) container.innerHTML = html || '<div class="empty">No valid item rows detected. Please check image clarity or add manually.</div>';
+    if (container) container.innerHTML = html || '<div class="empty">No items detected. Please check image clarity or add manually.</div>';
     updateReviewTotal();
     if ($('reviewDlg'))$('reviewDlg').showModal();
   }
@@ -347,7 +359,7 @@ window.addEventListener('DOMContentLoaded', () => {
         desc: card.querySelector('.rev-desc')?.value.trim() || '',
         hsn: card.querySelector('.rev-hsn')?.value.trim() || '',
         qty: num(card.querySelector('.rev-qty')?.value),
-        unit: card.querySelector('.rev-unit')?.value.trim() || 'Pcs',
+        unit: card.querySelector('.rev-unit')?.value.trim() || 'PC',
         rate: num(card.querySelector('.rev-rate')?.value),
         rack: card.querySelector('.rev-rack')?.value.trim() || ''
       });
@@ -355,10 +367,12 @@ window.addEventListener('DOMContentLoaded', () => {
 
     if (!confirmedItems.length) { alert('No items to confirm.'); return; }
 
+    const calculatedTotal = confirmedItems.reduce((a, x) => a + (x.qty * x.rate), 0);
+
     const payload = {
       invoiceNo: 'SCAN-' + Date.now(),
       invoiceDate: new Date().toISOString().slice(0, 10),
-      invoiceTotal: confirmedItems.reduce((a, x) => a + (x.qty * x.rate), 0),
+      invoiceTotal: calculatedTotal,
       items: confirmedItems
     };
 
@@ -381,7 +395,7 @@ window.addEventListener('DOMContentLoaded', () => {
   if ($('exp'))$('exp').onclick = async () => {
     if (!items.length) { alert('No stock to export.'); return; }
     const rows = [['S.No.', 'Part Number', 'Description of Goods', 'HSN Code', 'Quantity', 'Unit', 'Rate', 'Amount', 'Rack']];
-    items.forEach((x, i) => rows.push([i + 1, x.part, x.description, x.hsn, num(x.qty), x.unit || 'Pcs', num(x.rate), num(x.qty) * num(x.rate), x.rack || '']));
+    items.forEach((x, i) => rows.push([i + 1, x.part, x.description, x.hsn, num(x.qty), x.unit || 'PC', num(x.rate), num(x.qty) * num(x.rate), x.rack || '']));
     const ws = XLSX.utils.aoa_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Stock_Inventory');
