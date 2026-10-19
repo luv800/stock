@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Stock Scanner (Invoice Scan + Manual)</title>
+<title>Stock Scanner (Scan + Manual)</title>
 <style>
 :root{--bg:#eef1f4;--card:#fff;--tx:#17212b;--mu:#5e6b78;--bd:#d5dbe1;--ac:#0f4c5c;--on:#fff;--hi:#e0a100;--dg:#b3261e;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12181e;--card:#1a232b;--tx:#e8edf2;--mu:#98a5b1;--bd:#2b3743;--ac:#5cc1d6;--on:#06222a;--hi:#f0b429;--dg:#ff8a80}}
@@ -38,7 +38,7 @@ label{display:block;font-size:13px;color:var(--mu);margin:8px 0 3px}
 dialog{border:1px solid var(--bd);border-radius:12px;background:var(--card);color:var(--tx);width:min(96vw,820px);max-height:90vh;padding:16px;overflow-y:auto}
 dialog::backdrop{background:rgba(0,0,0,.5)}
 .g2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-#msg{min-height:20px;margin:8px 0 0}
+#msg{min-height:20px;margin:8px 0 0;color:var(--hi)}
 [hidden]{display:none!important}
 .ocr-progress{margin-top:8px;background:var(--bd);border-radius:6px;height:6px;overflow:hidden;width:100%}
 .ocr-bar{background:var(--ac);height:100%;width:0%;transition:width 0.2s}
@@ -135,12 +135,17 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
 <script>
+window.addEventListener('error', e => {
+  const m = document.getElementById('msg');
+  if (m) m.textContent = 'Script Error: ' + (e.message || e);
+});
+
 window.addEventListener('DOMContentLoaded', () => {
   const $ = id => document.getElementById(id);
   let items = [];
   let pendingScannedItems = [];
 
-  function msg(t) { $('msg').textContent = t || ''; }
+  function msg(t) { const m = $('msg'); if (m) m.textContent = t || ''; }
   const num = v => { const n = parseFloat(v); return (isNaN(n) || !isFinite(n)) ? 0 : n; };
   const fmt = n => (Math.round(n * 100) / 100).toLocaleString('en-IN');
   const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c] || c));
@@ -149,18 +154,27 @@ window.addEventListener('DOMContentLoaded', () => {
     try {
       const res = await fetch('/api/stock');
       if (res.ok) { items = await res.json(); renderStock(); }
-    } catch (e) { msg('Failed to load stock from server.'); }
+      else { msg('Warning: Could not fetch stock from server.'); }
+    } catch (e) {
+      msg('Server connection error.');
+    }
   }
 
   function tab(n) {
-    $('p1').hidden = n !== 1; $('p2').hidden = n !== 2;
-    $('t1').setAttribute('aria-selected', n === 1);$('t2').setAttribute('aria-selected', n === 2);
+    const p1 = $('p1'), p2 =$('p2'), t1 = $('t1'), t2 =$('t2');
+    if (p1) p1.hidden = (n !== 1);
+    if (p2) p2.hidden = (n !== 2);
+    if (t1) t1.setAttribute('aria-selected', n === 1);
+    if (t2) t2.setAttribute('aria-selected', n === 2);
     if (n === 2) loadStock();
   }
-  $('t1').onclick = () => tab(1);$('t2').onclick = () => tab(2);
+
+  if ($('t1'))$('t1').onclick = () => tab(1);
+  if ($('t2'))$('t2').onclick = () => tab(2);
 
   function renderStock() {
-    const f = $('q').value.trim().toLowerCase();
+    const qEl = $('q');
+    const f = qEl ? qEl.value.trim().toLowerCase() : '';
     let html = '';
     items.forEach((x, i) => {
       const p = x.part || '';
@@ -176,32 +190,53 @@ window.addEventListener('DOMContentLoaded', () => {
 
       html += '<tr data-i="' + i + '"><td>' + (i + 1) + '</td><td>' + esc(p) + '</td><td>' + esc(d) + '</td><td>' + esc(h) + '</td><td class="n">' + fmt(q) + '</td><td>' + esc(u) + '</td><td class="n">' + fmt(r) + '</td><td class="n">' + fmt(amt) + '</td><td>' + esc(rk) + '</td></tr>';
     });
-    $('rows').innerHTML = html || '<tr><td colspan="9" class="empty">' + (items.length ? 'No item matches your search.' : 'No items in inventory yet.') + '</td></tr>';
-    $('sI').textContent = items.length;
-    $('sQ').textContent = fmt(items.reduce((a, x) => a + num(x.qty), 0));
-    $('sV').textContent = fmt(items.reduce((a, x) => a + (num(x.qty) * num(x.rate)), 0)); }$('q').oninput = renderStock;
+    const rowsEl = $('rows');
+    if (rowsEl) rowsEl.innerHTML = html || '<tr><td colspan="9" class="empty">' + (items.length ? 'No item matches your search.' : 'No items in inventory yet.') + '</td></tr>';
+    
+    if ($('sI'))$('sI').textContent = items.length;
+    if ($('sQ'))$('sQ').textContent = fmt(items.reduce((a, x) => a + num(x.qty), 0));
+    if ($('sV'))$('sV').textContent = fmt(items.reduce((a, x) => a + (num(x.qty) * num(x.rate)), 0));
+  }
+  
+  const qInput = $('q');
+  if (qInput) qInput.oninput = renderStock;
 
   function openForm(o) {
-    $('dt').textContent = 'Add Item Manually';$('fPart').value = o.part || ''; $('fDesc').value = o.desc \vert{}\vert{} '';$('fHsn').value = o.hsn || '';
-    $('fRack').value = o.rack \vert{}\vert{} '';$('fUnit').value = o.unit || 'Pcs';
-    $('fRate').value = o.rate \vert{}\vert{} '';$('fQty').value = o.qty || 1;
-    $('dn').textContent = 'Enter part number, description, and rack location.';$('dlg').showModal();
+    if ($('dt'))$('dt').textContent = 'Add Item Manually';
+    if ($('fPart'))$('fPart').value = o.part || '';
+    if ($('fDesc'))$('fDesc').value = o.desc || '';
+    if ($('fHsn'))$('fHsn').value = o.hsn || '';
+    if ($('fRack'))$('fRack').value = o.rack || '';
+    if ($('fUnit'))$('fUnit').value = o.unit || 'Pcs';
+    if ($('fRate'))$('fRate').value = o.rate || '';
+    if ($('fQty'))$('fQty').value = o.qty || 1;
+    if ($('dn'))$('dn').textContent = 'Enter part number, description, and rack location.';
+    
+    const dlg = $('dlg');
+    if (dlg && typeof dlg.showModal === 'function') dlg.showModal();
   }
-  $('cancel').onclick = () => $('dlg').close();$('save').onclick = async () => {
-    const part = $('fPart').value.trim();
+
+  const cancelBtn = $('cancel');
+  if (cancelBtn) cancelBtn.onclick = () => { const dlg = $('dlg'); if (dlg) dlg.close(); };
+
+  const saveBtn = $('save');
+  if (saveBtn) saveBtn.onclick = async () => {
+    const partEl = $('fPart');
+    const part = partEl ? partEl.value.trim() : '';
     if (!part) { alert('Enter a part number.'); return; }
+    
     const payload = {
       invoiceNo: 'MANUAL-' + Date.now(),
       invoiceDate: new Date().toISOString().slice(0, 10),
-      invoiceTotal: num($('fQty').value) * num($('fRate').value),
+      invoiceTotal: num($('fQty')?.value) * num($('fRate')?.value),
       items: [{
         part,
-        desc: $('fDesc').value.trim(),
-        hsn: $('fHsn').value.trim(),
-        qty: num($('fQty').value) || 1,
-        unit: $('fUnit').value.trim() || 'Pcs',
-        rate: num($('fRate').value),
-        rack: $('fRack').value.trim()
+        desc: $('fDesc')?.value.trim() || '',
+        hsn: $('fHsn')?.value.trim() || '',
+        qty: num($('fQty')?.value) || 1,
+        unit: $('fUnit')?.value.trim() || 'Pcs',
+        rate: num($('fRate')?.value),
+        rack: $('fRack')?.value.trim() || ''
       }]
     };
     try {
@@ -212,7 +247,8 @@ window.addEventListener('DOMContentLoaded', () => {
       });
       if (res.ok) {
         msg('Successfully added item!');
-        $('dlg').close();
+        const dlg = $('dlg');
+        if (dlg) dlg.close();
         loadStock();
         tab(2);
       } else {
@@ -220,109 +256,101 @@ window.addEventListener('DOMContentLoaded', () => {
         alert('Error: ' + (err.error || 'Failed to save'));
       }
     } catch (e) {
-      alert('Network error while saving.');
+      alert('Network error while saving: ' + e.message);
     }
   };
-  $('addBtn').onclick = () => openForm({ qty: 1, unit: 'Pcs', hsn: '', rack: '' });
 
-  function prepareInvoiceImage(img) {
-    return new Promise((resolve) => {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      const maxW = 2400;
-      let w = img.width || img.naturalWidth || 1200;
-      let h = img.height || img.naturalHeight || 900;
-      if (w > maxW) { h = Math.round((h * maxW) / w); w = maxW; }
-      canvas.width = w; canvas.height = h;
+  const addBtn = $('addBtn');
+  if (addBtn) addBtn.onclick = () => openForm({ qty: 1, unit: 'Pcs', hsn: '', rack: '' });
 
-      ctx.drawImage(img, 0, 0, w, h);
-      const imgData = ctx.getImageData(0, 0, w, h);
-      const data = imgData.data;
-      for (let i = 0; i < data.length; i += 4) {
-        let avg = (data[i] * 0.3 + data[i+1] * 0.6 + data[i+2] * 0.1);
-        let v = avg < 160 ? 0 : 255;
-        data[i] = v; data[i+1] = v; data[i+2] = v;
-      }
-      ctx.putImageData(imgData, 0, 0);
-      resolve(canvas);
-    });
+  const photoBtn = $('photoBtn');
+  const fileInput = $('file');
+  if (photoBtn && fileInput) {
+    photoBtn.onclick = () => fileInput.click();
   }
 
-  $('photoBtn').onclick = () =>$('file').click();
+  if (fileInput) {
+    fileInput.onchange = async e => {
+      const files = Array.from(e.target.files || []);
+      fileInput.value = ''; 
+      if (!files.length) return;
 
-  $('file').onchange = async e => {
-    const files = Array.from(e.target.files);
-    $('file').value = ''; 
-    if (!files.length) return;
+      const progressWrap = $('ocrProgressWrap');
+      if (progressWrap) progressWrap.hidden = false;
+      const totalFiles = files.length;
+      pendingScannedItems = [];
 
-    $('ocrProgressWrap').hidden = false;
-    const totalFiles = files.length;
-    pendingScannedItems = [];
+      try {
+        for (let idx = 0; idx < totalFiles; idx++) {
+          const f = files[idx];
+          const pct = Math.round(((idx + 1) / totalFiles) * 80);
+          const bar = $('ocrBar');
+          if (bar) bar.style.width = pct + '%';
+          const statusText = $('ocrStatusText');
+          if (statusText) statusText.textContent = `Processing invoice page ${idx + 1} of ${totalFiles} (OCR)...`;
 
-    try {
-      for (let idx = 0; idx < totalFiles; idx++) {
-        const f = files[idx];
-        const pct = Math.round(((idx + 1) / totalFiles) * 80);
-        $('ocrBar').style.width = pct + '\%';$('ocrStatusText').textContent = `Processing invoice page ${idx + 1} of ${totalFiles} (OCR)...`;
+          const img = new Image();
+          img.src = URL.createObjectURL(f);
+          await new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
 
-        const img = new Image();
-        img.src = URL.createObjectURL(f);
-        await new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
+          const worker = await Tesseract.createWorker('eng');
+          const ret = await worker.recognize(img);
+          await worker.terminate();
 
-        const processedCanvas = await prepareInvoiceImage(img);
-
-        const worker = await Tesseract.createWorker('eng');
-        const ret = await worker.recognize(processedCanvas);
-        await worker.terminate();
-
-        const text = (ret.data.text || '');
-        const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-        
-        lines.forEach(line => {
-          const parts = line.split(/\s+/);
-          if (parts.length >= 3) {
-            const possiblePart = parts[0];
-            if (possiblePart.length >= 4 && /[A-Z0-9]/.test(possiblePart)) {
-              pendingScannedItems.push({
-                part: possiblePart,
-                desc: parts.slice(1, parts.length - 2).join(' ') || 'Scanned Item',
-                hsn: '',
-                qty: 1,
-                unit: 'Pcs',
-                rate: 0,
-                rack: ''
-              });
+          const text = (ret.data.text || '');
+          const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+          
+          lines.forEach(line => {
+            const parts = line.split(/\s+/);
+            if (parts.length >= 2) {
+              const possiblePart = parts[0];
+              if (possiblePart.length >= 3) {
+                pendingScannedItems.push({
+                  part: possiblePart,
+                  desc: parts.slice(1).join(' ') || 'Scanned Item',
+                  hsn: '',
+                  qty: 1,
+                  unit: 'Pcs',
+                  rate: 0,
+                  rack: ''
+                });
+              }
             }
-          }
-        });
+          });
+        }
+
+        const uniqueMap = new Map();
+        pendingScannedItems.forEach(item => uniqueMap.set(item.part, item));
+        pendingScannedItems = Array.from(uniqueMap.values());
+
+        const bar = $('ocrBar');
+        if (bar) bar.style.width = '100%';
+        setTimeout(() => { const pw = $('ocrProgressWrap'); if (pw) pw.hidden = true; }, 400);
+
+        openReviewModal(pendingScannedItems);
+        msg(`Successfully scanned ${totalFiles} page(s). Please verify items.`);
+      } catch (err) {
+        const pw = $('ocrProgressWrap');
+        if (pw) pw.hidden = true;
+        alert('OCR processing error: ' + err.message);
+        msg('Scan failed.');
       }
-
-      const uniqueMap = new Map();
-      pendingScannedItems.forEach(item => uniqueMap.set(item.part, item));
-      pendingScannedItems = Array.from(uniqueMap.values());
-
-      $('ocrBar').style.width = '100%';
-      setTimeout(() => { $('ocrProgressWrap').hidden = true; }, 400);
-
-      openReviewModal(pendingScannedItems);
-      msg(`Successfully scanned ${totalFiles} page(s). Please verify items.`);
-    } catch (err) {
-      $('ocrProgressWrap').hidden = true;
-      alert('OCR processing error: ' + err.message);
-      msg('Scan failed.');
-    }
-  };
+    };
+  }
 
   function updateReviewTotal() {
     const cards = document.querySelectorAll('.review-card');
     let totalAmt = 0;
     cards.forEach(card => {
-      const q = num(card.querySelector('.rev-qty').value);
-      const r = num(card.querySelector('.rev-rate').value);
+      const q = num(card.querySelector('.rev-qty')?.value);
+      const r = num(card.querySelector('.rev-rate')?.value);
       totalAmt += (q * r);
     });
-    $('reviewTotalAmount').textContent = '₹ ' + fmt(totalAmt);
+    const revTotal = $('reviewTotalAmount');
+    if (revTotal) revTotal.textContent = '₹ ' + fmt(totalAmt);
   }
+
+  window.updateReviewTotalCalc = updateReviewTotal;
 
   function openReviewModal(scannedArray) {
     pendingScannedItems = JSON.parse(JSON.stringify(scannedArray));
@@ -343,10 +371,10 @@ window.addEventListener('DOMContentLoaded', () => {
       html += '</div>';
     });
 
-    container.innerHTML = html || '<div class="empty">No items detected. Please add items manually or check image clarity.</div>';
-    window.updateReviewTotalCalc = updateReviewTotal;
+    if (container) container.innerHTML = html || '<div class="empty">No items detected. Please add items manually or check image clarity.</div>';
     updateReviewTotal();
-    $('reviewDlg').showModal();
+    const revDlg = $('reviewDlg');
+    if (revDlg && typeof revDlg.showModal === 'function') revDlg.showModal();
   }
 
   window.removeScannedRow = idx => {
@@ -354,21 +382,23 @@ window.addEventListener('DOMContentLoaded', () => {
     openReviewModal(pendingScannedItems);
   };
 
-  $('cancelScanBtn').onclick = () => {$('reviewDlg').close(); msg('Scan cancelled.'); };
+  const cancelScanBtn = $('cancelScanBtn');
+  if (cancelScanBtn) cancelScanBtn.onclick = () => { const revDlg = $('reviewDlg'); if (revDlg) revDlg.close(); msg('Scan cancelled.'); };
 
-  $('confirmScanBtn').onclick = async () => {
+  const confirmScanBtn = $('confirmScanBtn');
+  if (confirmScanBtn) confirmScanBtn.onclick = async () => {
     const cards = document.querySelectorAll('.review-card');
     const confirmedItems = [];
 
     cards.forEach(card => {
       confirmedItems.push({
-        part: card.querySelector('.rev-part').value.trim(),
-        desc: card.querySelector('.rev-desc').value.trim(),
-        hsn: card.querySelector('.rev-hsn').value.trim(),
-        qty: num(card.querySelector('.rev-qty').value),
-        unit: card.querySelector('.rev-unit').value.trim() || 'Pcs',
-        rate: num(card.querySelector('.rev-rate').value),
-        rack: card.querySelector('.rev-rack').value.trim()
+        part: card.querySelector('.rev-part')?.value.trim() || '',
+        desc: card.querySelector('.rev-desc')?.value.trim() || '',
+        hsn: card.querySelector('.rev-hsn')?.value.trim() || '',
+        qty: num(card.querySelector('.rev-qty')?.value),
+        unit: card.querySelector('.rev-unit')?.value.trim() || 'Pcs',
+        rate: num(card.querySelector('.rev-rate')?.value),
+        rack: card.querySelector('.rev-rack')?.value.trim() || ''
       });
     });
 
@@ -388,7 +418,8 @@ window.addEventListener('DOMContentLoaded', () => {
         body: JSON.stringify(payload)
       });
       if (res.ok) {
-        $('reviewDlg').close();
+        const revDlg = $('reviewDlg');
+        if (revDlg) revDlg.close();
         msg('Successfully confirmed and saved scanned items to database!');
         loadStock();
         tab(2);
@@ -401,7 +432,8 @@ window.addEventListener('DOMContentLoaded', () => {
     }
   };
 
-  $('exp').onclick = async () => {
+  const expBtn = $('exp');
+  if (expBtn) expBtn.onclick = async () => {
     if (!items.length) { alert('No stock items to export.'); return; }
     const rows = [['S.No.', 'Part Number', 'Description of Goods', 'HSN Code', 'Quantity', 'Unit', 'Rate', 'Amount', 'Rack']];
     items.forEach((x, i) => rows.push([i + 1, x.part, x.description, x.hsn, num(x.qty), x.unit || 'Pcs', num(x.rate), num(x.qty) * num(x.rate), x.rack || '']));
