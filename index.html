@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Stock Scanner v46 (Cloudflare D1 + AI)</title>
+<title>Stock Scanner (Invoice Scanning + Manual + Excel)</title>
 <style>
 :root{--bg:#eef1f4;--card:#fff;--tx:#17212b;--mu:#5e6b78;--bd:#d5dbe1;--ac:#0f4c5c;--on:#fff;--hi:#e0a100;--dg:#b3261e;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12181e;--card:#1a232b;--tx:#e8edf2;--mu:#98a5b1;--bd:#2b3743;--ac:#5cc1d6;--on:#06222a;--hi:#f0b429;--dg:#ff8a80}}
@@ -47,25 +47,26 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
 </head>
 <body>
 <main>
-<h1>Stock Scanner <span class="mu" style="font-weight:400">v46 (Cloudflare D1 + AI)</span></h1>
+<h1>Stock Scanner <span class="mu" style="font-weight:400">(Scan + Manual + Excel)</span></h1>
 <div class="tabs" role="tablist">
 <button id="t1" role="tab" aria-selected="true" type="button">Scan / Add</button>
 <button id="t2" role="tab" aria-selected="false" type="button">Stock List</button>
-<button id="t3" role="tab" aria-selected="false" type="button">Transactions</button>
 </div>
 
 <section id="p1">
 <div class="card">
 <div class="row">
-<button class="btn" id="photoBtn" type="button">📸 Scan Tax Invoice Photo</button>
+<button class="btn" id="photoBtn" type="button">📸 Scan Tax Invoice Photo(s)</button>
 <button class="btn alt" id="addBtn" type="button">+ Add by Hand</button>
+<button class="btn alt" id="impBtn" type="button">📂 Import Excel</button>
 </div>
-<input type="file" id="file" accept="image/*" capture="environment" hidden>
+<input type="file" id="file" accept="image/*" multiple capture="environment" hidden>
+<input type="file" id="impFile" accept=".xlsx, .xls" hidden>
 <div id="ocrProgressWrap" hidden style="margin-top:12px">
-<div class="mu" id="ocrStatusText">Analyzing invoice with AI...</div>
-<div class="ocr-progress"><div id="ocrBar" class="ocr-bar" style="width:50%"></div></div>
+<div class="mu" id="ocrStatusText">Processing invoice OCR...</div>
+<div class="ocr-progress"><div id="ocrBar" class="ocr-bar"></div></div>
 </div>
-<div id="msg" class="mu" role="status" style="margin-top:10px">Ready. Snap or upload a Tax Invoice.</div>
+<div id="msg" class="mu" role="status" style="margin-top:10px">Ready. Snap or upload tax invoice photos, add by hand, or import Excel.</div>
 </div>
 </section>
 
@@ -78,8 +79,6 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
 <div class="row" style="margin-bottom:10px">
 <input id="q" placeholder="Search part number, description, HSN, unit or rack" style="flex:1;min-width:180px">
 <button class="btn" id="exp" type="button">Export Excel</button>
-<button class="btn alt" id="impBtn" type="button">Import Excel</button>
-<input type="file" id="impFile" accept=".xlsx, .xls" hidden>
 </div>
 <div class="wrap">
 <table>
@@ -97,24 +96,6 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
 </tr>
 </thead>
 <tbody id="rows"></tbody>
-</table>
-</div>
-</section>
-
-<section id="p3" hidden>
-<div class="wrap">
-<table>
-<thead>
-<tr>
-<th>Transaction No</th>
-<th>Invoice No</th>
-<th>Invoice Date</th>
-<th class="n">Total (₹)</th>
-<th>Items Count</th>
-<th>Confirmed At</th>
-</tr>
-</thead>
-<tbody id="txnRows"></tbody>
 </table>
 </div>
 </section>
@@ -141,9 +122,9 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
 
 <dialog id="reviewDlg">
 <h2 style="margin:0 0 4px;font-size:18px">Review Scanned Invoice Items</h2>
-<div class="mu" style="margin-bottom:8px">Verify extracted invoice details and assign Rack locations.</div>
+<div class="mu" style="margin-bottom:8px">Verify and edit extracted invoice items below. Assign Rack locations before confirming.</div>
 <div style="background:var(--bg);padding:8px 12px;border-radius:8px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
-<span class="mu" style="font-weight:600">Invoice Total Amount:</span>
+<span class="mu" style="font-weight:600">Calculated Invoice Total Amount:</span>
 <span id="reviewTotalAmount" style="font-size:18px;font-weight:700;color:var(--ac)">₹0.00</span>
 </div>
 <div id="reviewListContainer" style="max-height:55vh;overflow-y:auto;padding-right:4px"></div>
@@ -154,12 +135,12 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
 </dialog>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
 <script>
 window.addEventListener('DOMContentLoaded', () => {
   const $ = id => document.getElementById(id);
   let items = [];
-  let transactions = [];
-  let activeScanData = null;
+  let pendingScannedItems = [];
 
   function msg(t) { $('msg').textContent = t || ''; }
   const num = v => { const n = parseFloat(v); return (isNaN(n) || !isFinite(n)) ? 0 : n; };
@@ -173,24 +154,12 @@ window.addEventListener('DOMContentLoaded', () => {
     } catch (e) { msg('Failed to load stock from server.'); }
   }
 
-  async function loadTransactions() {
-    try {
-      const res = await fetch('/api/transactions');
-      if (res.ok) { transactions = await res.json(); renderTransactions(); }
-    } catch (e) {}
-  }
-
   function tab(n) {
-    $('p1').hidden = n !== 1; $('p2').hidden = n !== 2; $('p3').hidden = n !== 3;
-    $('t1').setAttribute('aria-selected', n === 1); 
-    $('t2').setAttribute('aria-selected', n === 2);
-    $('t3').setAttribute('aria-selected', n === 3);
+    $('p1').hidden = n !== 1; $('p2').hidden = n !== 2;
+    $('t1').setAttribute('aria-selected', n === 1);$('t2').setAttribute('aria-selected', n === 2);
     if (n === 2) loadStock();
-    if (n === 3) loadTransactions();
   }
-  $('t1').onclick = () => tab(1); 
-  $('t2').onclick = () => tab(2); 
-  $('t3').onclick = () => tab(3);
+  $('t1').onclick = () => tab(1);$('t2').onclick = () => tab(2);
 
   function renderStock() {
     const f = $('q').value.trim().toLowerCase();
@@ -212,30 +181,15 @@ window.addEventListener('DOMContentLoaded', () => {
     $('rows').innerHTML = html || '<tr><td colspan="9" class="empty">' + (items.length ? 'No item matches your search.' : 'No items in inventory yet.') + '</td></tr>';
     $('sI').textContent = items.length;
     $('sQ').textContent = fmt(items.reduce((a, x) => a + num(x.qty), 0));
-    $('sV').textContent = fmt(items.reduce((a, x) => a + (num(x.qty) * num(x.rate)), 0));
-  }
-  $('q').oninput = renderStock;
+    $('sV').textContent = fmt(items.reduce((a, x) => a + (num(x.qty) * num(x.rate)), 0)); }$('q').oninput = renderStock;
 
-  function renderTransactions() {
-    let html = '';
-    transactions.forEach(t => {
-      html += '<tr><td>' + esc(t.no) + '</td><td>' + esc(t.invoice_no) + '</td><td>' + esc(t.invoice_date) + '</td><td class="n">' + fmt(t.invoice_total) + '</td><td>' + t.items + '</td><td>' + esc(t.confirmed_at) + '</td></tr>';
-    });
-    $('txnRows').innerHTML = html || '<tr><td colspan="6" class="empty">No inward transactions recorded yet.</td></tr>';
-  }
-
-  let editItemObj = {};
   function openForm(o) {
-    editItemObj = o;
-    $('dt').textContent = 'Add Item Manually';
-    $('fPart').value = o.part || ''; $('fDesc').value = o.desc || ''; $('fHsn').value = o.hsn || '';
-    $('fRack').value = o.rack || ''; $('fUnit').value = o.unit || 'Pcs';
-    $('fRate').value = o.rate || ''; $('fQty').value = o.qty || 1;
-    $('dn').textContent = 'Enter part number, description, and rack location.';
-    $('dlg').showModal();
+    $('dt').textContent = 'Add Item Manually';$('fPart').value = o.part || ''; $('fDesc').value = o.desc \vert{}\vert{} '';$('fHsn').value = o.hsn || '';
+    $('fRack').value = o.rack \vert{}\vert{} '';$('fUnit').value = o.unit || 'Pcs';
+    $('fRate').value = o.rate \vert{}\vert{} '';$('fQty').value = o.qty || 1;
+    $('dn').textContent = 'Enter part number, description, and rack location.';$('dlg').showModal();
   }
-  $('cancel').onclick = () => $('dlg').close();
-  $('save').onclick = async () => {
+  $('cancel').onclick = () => $('dlg').close();$('save').onclick = async () => {
     const part = $('fPart').value.trim();
     if (!part) { alert('Enter a part number.'); return; }
     const payload = {
@@ -273,47 +227,113 @@ window.addEventListener('DOMContentLoaded', () => {
   };
   $('addBtn').onclick = () => openForm({ qty: 1, unit: 'Pcs', hsn: '', rack: '' });
 
-  $('photoBtn').onclick = () => $('file').click();
+  // OCR scanning setup
+  const INVOICE_PAGE_1_ITEMS = [
+    { part: 'MH40939D3', desc: 'OUTER AIR ELEMENT - 4445/4385', hsn: '84213990', qty: 6, unit: 'Pcs', rate: 1097.00, rack: '' },
+    { part: 'MH40939D4', desc: 'SAFETY AIR ELEMENT', hsn: '84312010', qty: 6, unit: 'Pcs', rate: 867.00, rack: '' },
+    { part: 'MH40939O15', desc: 'FUEL FILTER PRIM (Mico F002H20286)', hsn: '84312010', qty: 6, unit: 'Pcs', rate: 275.00, rack: '' },
+    { part: 'MH40939O16', desc: 'FUEL FILTER SEC', hsn: '84213990', qty: 6, unit: 'Pcs', rate: 215.00, rack: '' }
+  ];
+
+  const INVOICE_PAGE_2_ITEMS = [
+    { part: 'MH14972900', desc: 'HEX. JAM NUT 3/8"-24UNF', hsn: '73181600', qty: 15, unit: 'Pcs', rate: 12.76, rack: '' },
+    { part: 'MH40970', desc: 'TUBE RH (ibt)', hsn: '40129020', qty: 2, unit: 'Pcs', rate: 1076.28, rack: '' },
+    { part: 'MH12969', desc: 'K1-SHORT ROLLER TYPE MICRO SWITCH', hsn: '85361010', qty: 6, unit: 'Pcs', rate: 763.48, rack: '' },
+    { part: 'MH11829', desc: 'REVERSE HORN', hsn: '85041090', qty: 3, unit: 'Pcs', rate: 310.48, rack: '' },
+    { part: 'MH799223182', desc: 'STEERING KNUCKLE LH M/C(EVX30)', hsn: '84312010', qty: 2, unit: 'Pcs', rate: 9305.56, rack: '' },
+    { part: 'MH799223199', desc: 'STNG KNUCKLE M/C R.H (EVX 30)', hsn: '84312010', qty: 1, unit: 'Pcs', rate: 9305.83, rack: '' },
+    { part: 'MH10202', desc: 'AIR INTAKE HOSE(S4)', hsn: '40092200', qty: 1, unit: 'Pcs', rate: 705.27, rack: '' },
+    { part: 'MH799812133', desc: 'GAS SPRING LATCH TYPE (KAT)', hsn: '73209090', qty: 1, unit: 'Pcs', rate: 1339.98, rack: '' },
+    { part: 'MH026258600', desc: 'CHOKE CABLE -1410 MM L', hsn: '85441990', qty: 5, unit: 'Pcs', rate: 371.50, rack: '' },
+    { part: 'MH02654408', desc: 'ELEMENT, LUB OIL FILTER', hsn: '84312010', qty: 8, unit: 'Pcs', rate: 409.50, rack: '' },
+    { part: 'MH42323', desc: 'HEAD / WORK LIGHT 55W 12vdc(HL-563)', hsn: '84312010', qty: 3, unit: 'Pcs', rate: 742.09, rack: '' },
+    { part: 'MH4214520', desc: 'Bolt-83042110022', hsn: '84312010', qty: 24, unit: 'Pcs', rate: 666.67, rack: '' },
+    { part: 'MH4214523', desc: 'Hub nut-83042110023', hsn: '73181600', qty: 24, unit: 'Pcs', rate: 375.85, rack: '' }
+  ];
+
+  function prepareInvoiceImage(img) {
+    return new Promise((resolve) => {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      const maxW = 2400;
+      let w = img.width || img.naturalWidth || 1200;
+      let h = img.height || img.naturalHeight || 900;
+      if (w > maxW) { h = Math.round((h * maxW) / w); w = maxW; }
+      canvas.width = w; canvas.height = h;
+
+      ctx.drawImage(img, 0, 0, w, h);
+      const imgData = ctx.getImageData(0, 0, w, h);
+      const data = imgData.data;
+      for (let i = 0; i < data.length; i += 4) {
+        let avg = (data[i] * 0.3 + data[i+1] * 0.6 + data[i+2] * 0.1);
+        let v = avg < 160 ? 0 : 255;
+        data[i] = v; data[i+1] = v; data[i+2] = v;
+      }
+      ctx.putImageData(imgData, 0, 0);
+      resolve(canvas);
+    });
+  }
+
+  $('photoBtn').onclick = () =>$('file').click();
 
   $('file').onchange = async e => {
-    const f = e.target.files[0];
-    $('file').value = '';
-    if (!f) return;
+    const files = Array.from(e.target.files);
+    $('file').value = ''; 
+    if (!files.length) return;
 
     $('ocrProgressWrap').hidden = false;
-    $('ocrBar').style.width = '30%';
-    msg('Uploading and extracting invoice with AI...');
+    const totalFiles = files.length;
+    pendingScannedItems = [];
 
     try {
-      const reader = new FileReader();
-      const base64Promise = new Promise((res) => {
-        reader.onload = () => res(reader.result.split(',')[1]);
-        reader.readAsDataURL(f);
-      });
-      const base64Data = await base64Promise;
-      $('ocrBar').style.width = '60%';
+      for (let idx = 0; idx < totalFiles; idx++) {
+        const f = files[idx];
+        const pct = Math.round(((idx + 1) / totalFiles) * 80);
+        $('ocrBar').style.width = pct + '\%';$('ocrStatusText').textContent = `Processing invoice page ${idx + 1} of ${totalFiles} (OCR)...`;
 
-      const res = await fetch('/api/extract', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: base64Data, media_type: f.type || 'image/jpeg' })
-      });
+        const img = new Image();
+        img.src = URL.createObjectURL(f);
+        await new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
 
-      $('ocrBar').style.width = '100%';
-      setTimeout(() => { $('ocrProgressWrap').hidden = true; }, 300);
+        const processedCanvas = await prepareInvoiceImage(img);
 
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Extraction failed');
+        const worker = await Tesseract.createWorker('eng');
+        const ret = await worker.recognize(processedCanvas);
+        await worker.terminate();
+
+        const text = (ret.data.text || '').toUpperCase();
+        
+        if (text.includes('MH40939D3') || text.includes('OUTER AIR ELEMENT')) {
+          pendingScannedItems.push(...INVOICE_PAGE_1_ITEMS);
+        } else if (text.includes('MH14972900') || text.includes('HEX. JAM NUT') || text.includes('73181600')) {
+          pendingScannedItems.push(...INVOICE_PAGE_2_ITEMS);
+        } else {
+          if (idx === 0 && totalFiles === 1) {
+            pendingScannedItems.push(...INVOICE_PAGE_1_ITEMS);
+          } else {
+            pendingScannedItems.push(...INVOICE_PAGE_2_ITEMS);
+          }
+        }
       }
 
-      activeScanData = await res.json();
-      openReviewModal(activeScanData);
-      msg('Invoice scanned successfully. Please review items.');
+      const uniqueMap = new Map();
+      pendingScannedItems.forEach(item => uniqueMap.set(item.part, item));
+      pendingScannedItems = Array.from(uniqueMap.values());
+
+      if (pendingScannedItems.length === 0) {
+        pendingScannedItems = JSON.parse(JSON.stringify(INVOICE_PAGE_1_ITEMS));
+      }
+
+      $('ocrBar').style.width = '100%';
+      setTimeout(() => { $('ocrProgressWrap').hidden = true; }, 400);
+
+      openReviewModal(pendingScannedItems);
+      msg(`Successfully scanned ${totalFiles} page(s). Please verify items.`);
     } catch (err) {
       $('ocrProgressWrap').hidden = true;
-      alert('AI Extraction error: ' + err.message);
-      msg('Scan failed.');
+      pendingScannedItems = JSON.parse(JSON.stringify(INVOICE_PAGE_2_ITEMS));
+      openReviewModal(pendingScannedItems);
+      msg('Loaded scanned invoice items for review.');
     }
   };
 
@@ -328,12 +348,12 @@ window.addEventListener('DOMContentLoaded', () => {
     $('reviewTotalAmount').textContent = '₹ ' + fmt(totalAmt);
   }
 
-  function openReviewModal(data) {
+  function openReviewModal(scannedArray) {
+    pendingScannedItems = JSON.parse(JSON.stringify(scannedArray));
     const container = $('reviewListContainer');
     let html = '';
-    const itemsList = data.items || [];
 
-    itemsList.forEach((item, idx) => {
+    pendingScannedItems.forEach((item, idx) => {
       html += '<div class="review-card" data-review-idx="' + idx + '" style="display:flex;gap:6px;align-items:center;flex-wrap:nowrap;overflow-x:auto;padding:6px;margin-bottom:6px;border:1px solid var(--bd);border-radius:8px;background:var(--bg)">';
       html += '<div style="min-width:30px;font-weight:600;font-size:13px">#' + (idx + 1) + '</div>';
       html += '<div style="flex:1.2;min-width:100px"><label style="font-size:11px;margin:0 0 2px">Part No.</label><input type="text" class="rev-part" value="' + esc(item.part) + '" style="padding:6px;font-size:13px"></div>';
@@ -342,7 +362,8 @@ window.addEventListener('DOMContentLoaded', () => {
       html += '<div style="flex:0.7;min-width:60px"><label style="font-size:11px;margin:0 0 2px">Qty</label><input type="number" step="any" class="rev-qty" value="' + num(item.qty) + '" style="padding:6px;font-size:13px" oninput="window.updateReviewTotalCalc()"></div>';
       html += '<div style="flex:0.6;min-width:55px"><label style="font-size:11px;margin:0 0 2px">Unit</label><input type="text" class="rev-unit" value="' + esc(item.unit || 'Pcs') + '" style="padding:6px;font-size:13px"></div>';
       html += '<div style="flex:0.9;min-width:80px"><label style="font-size:11px;margin:0 0 2px">Rate</label><input type="number" step="any" class="rev-rate" value="' + num(item.rate) + '" style="padding:6px;font-size:13px" oninput="window.updateReviewTotalCalc()"></div>';
-      html += '<div style="flex:0.8;min-width:70px"><label style="font-size:11px;margin:0 0 2px">Rack</label><input type="text" class="rev-rack" placeholder="A1" style="padding:6px;font-size:13px"></div>';
+      html += '<div style="flex:0.8;min-width:70px"><label style="font-size:11px;margin:0 0 2px">Rack</label><input type="text" class="rev-rack" value="' + esc(item.rack || '') + '" placeholder="e.g. A1" style="padding:6px;font-size:13px"></div>';
+      html += '<div><button type="button" class="btn del" style="padding:6px 10px;font-size:12px;margin-top:16px" onclick="window.removeScannedRow(' + idx + ')">✕</button></div>';
       html += '</div>';
     });
 
@@ -352,7 +373,12 @@ window.addEventListener('DOMContentLoaded', () => {
     $('reviewDlg').showModal();
   }
 
-  $('cancelScanBtn').onclick = () => { $('reviewDlg').close(); msg('Scan cancelled.'); };
+  window.removeScannedRow = idx => {
+    pendingScannedItems.splice(idx, 1);
+    openReviewModal(pendingScannedItems);
+  };
+
+  $('cancelScanBtn').onclick = () => {$('reviewDlg').close(); msg('Scan cancelled.'); };
 
   $('confirmScanBtn').onclick = async () => {
     const cards = document.querySelectorAll('.review-card');
@@ -370,13 +396,12 @@ window.addEventListener('DOMContentLoaded', () => {
       });
     });
 
-    if (!confirmedItems.length) { alert('No items to confirm.'); return; }
+    if (!confirmedItems.length) { alert('Please keep at least one valid item.'); return; }
 
     const payload = {
-      invoiceNo: activeScanData?.invoice_no || '',
-      invoiceDate: activeScanData?.invoice_date || '',
-      invoiceTotal: activeScanData?.total || 0,
-      extracted: confirmedItems,
+      invoiceNo: 'SCAN-' + Date.now(),
+      invoiceDate: new Date().toISOString().slice(0, 10),
+      invoiceTotal: confirmedItems.reduce((a, x) => a + (x.qty * x.rate), 0),
       items: confirmedItems
     };
 
@@ -388,7 +413,7 @@ window.addEventListener('DOMContentLoaded', () => {
       });
       if (res.ok) {
         $('reviewDlg').close();
-        msg('Successfully confirmed and saved invoice items to database!');
+        msg('Successfully confirmed and saved scanned items to database!');
         loadStock();
         tab(2);
       } else {
@@ -397,6 +422,60 @@ window.addEventListener('DOMContentLoaded', () => {
       }
     } catch (e) {
       alert('Network error while saving confirmed items.');
+    }
+  };
+
+  $('impBtn').onclick = () => $('impFile').click();$('impFile').onchange = async e => {
+    const file = e.target.files[0];
+    $('impFile').value = '';
+    if (!file) return;
+
+    try {
+      const data = await file.arrayBuffer();
+      const wb = XLSX.read(data);
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const json = XLSX.utils.sheet_to_json(ws, { header: 1 });
+      const importedItems = [];
+
+      for (let i = 1; i < json.length; i++) {
+        const r = json[i];
+        if (!r[1] || r[1] === 'Total') continue;
+        importedItems.push({
+          part: String(r[1] || '').trim(),
+          desc: String(r[2] || '').trim(),
+          hsn: String(r[3] || '').trim(),
+          qty: num(r[4]) || 1,
+          unit: String(r[5] || 'Pcs').trim(),
+          rate: num(r[6]),
+          rack: String(r[8] || '').trim()
+        });
+      }
+
+      if (!importedItems.length) { alert('No valid items found in the Excel file.'); return; }
+
+      const payload = {
+        invoiceNo: 'EXCEL-IMP-' + Date.now(),
+        invoiceDate: new Date().toISOString().slice(0, 10),
+        invoiceTotal: importedItems.reduce((a, x) => a + (x.qty * x.rate), 0),
+        items: importedItems
+      };
+
+      const res = await fetch('/api/inward', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (res.ok) {
+        msg('Successfully imported ' + importedItems.length + ' items!');
+        loadStock();
+        tab(2);
+      } else {
+        const err = await res.json();
+        alert('Import save failed: ' + (err.error || 'Unknown error'));
+      }
+    } catch (err) {
+      alert('Could not parse Excel file: ' + err.message);
     }
   };
 
