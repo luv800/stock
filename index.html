@@ -300,11 +300,23 @@ window.addEventListener('DOMContentLoaded', () => {
           const text = (ret.data.text || '');
           const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
           
+          // Smart filtering to exclude headers, addresses, totals, and garbage text
           lines.forEach(line => {
+            const upper = line.toUpperCase();
+            if (
+              upper.includes('TAX') || upper.includes('INVOICE') || upper.includes('ADRES') || 
+              upper.includes('GSTIN') || upper.includes('TOTAL') || upper.includes('DATE') || 
+              upper.includes('PAGE') || upper.includes('STATE') || upper.includes('PAN') ||
+              upper.includes('DESCRIPTION') || upper.includes('HSN') || upper.includes('QTY') ||
+              upper.includes('RATE') || upper.includes('AMOUNT') || upper.length < 4
+            ) {
+              return;
+            }
+
             const parts = line.split(/\s+/);
             if (parts.length >= 2) {
               const possiblePart = parts[0];
-              if (possiblePart.length >= 3) {
+              if (possiblePart.length >= 3 && !/^[0-9]+$/.test(possiblePart)) {
                 pendingScannedItems.push({
                   part: possiblePart,
                   desc: parts.slice(1).join(' ') || 'Scanned Item',
@@ -371,7 +383,7 @@ window.addEventListener('DOMContentLoaded', () => {
       html += '</div>';
     });
 
-    if (container) container.innerHTML = html || '<div class="empty">No items detected. Please add items manually or check image clarity.</div>';
+    if (container) container.innerHTML = html || '<div class="empty">No item rows detected. Please add items manually using the "+ Add by Hand" button.</div>';
     updateReviewTotal();
     const revDlg = $('reviewDlg');
     if (revDlg && typeof revDlg.showModal === 'function') revDlg.showModal();
