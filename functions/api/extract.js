@@ -15,7 +15,8 @@ export async function onRequestPost({ request, env }) {
       bytes[i] = binaryString.charCodeAt(i);
     }
 
-    const prompt = `agree. You are reading a supplier tax invoice. Extract every line item from the goods table.
+    const prompt = `agree
+You are reading a supplier tax invoice. Extract every line item from the goods table.
 Return ONLY JSON, no markdown, in this shape:
 {"invoice_no":"","invoice_date":"YYYY-MM-DD or ''","total":null,
 "items":[{"part":"","desc":"","hsn":"","qty":1,"unit":"PC","rate":0}]}
