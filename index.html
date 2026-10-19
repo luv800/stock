@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Stock Scanner (Scan + Manual)</title>
+<title>Stock Scanner (Automated AI Scan)</title>
 <style>
 :root{--bg:#eef1f4;--card:#fff;--tx:#17212b;--mu:#5e6b78;--bd:#d5dbe1;--ac:#0f4c5c;--on:#fff;--hi:#e0a100;--dg:#b3261e;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12181e;--card:#1a232b;--tx:#e8edf2;--mu:#98a5b1;--bd:#2b3743;--ac:#5cc1d6;--on:#06222a;--hi:#f0b429;--dg:#ff8a80}}
@@ -47,7 +47,7 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
 </head>
 <body>
 <main>
-<h1>Stock Scanner <span class="mu" style="font-weight:400">(Scan + Manual)</span></h1>
+<h1>Stock Scanner <span class="mu" style="font-weight:400">(Automated AI Scan + Manual)</span></h1>
 <div class="tabs" role="tablist">
 <button id="t1" role="tab" aria-selected="true" type="button">Scan / Add</button>
 <button id="t2" role="tab" aria-selected="false" type="button">Stock List</button>
@@ -56,15 +56,15 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
 <section id="p1">
 <div class="card">
 <div class="row">
-<button class="btn" id="photoBtn" type="button">📸 Scan Tax Invoice Photo(s)</button>
+<button class="btn" id="photoBtn" type="button">📸 AI Scan Invoice Photo</button>
 <button class="btn alt" id="addBtn" type="button">+ Add by Hand</button>
 </div>
-<input type="file" id="file" accept="image/*" multiple capture="environment" hidden>
+<input type="file" id="file" accept="image/*" capture="environment" hidden>
 <div id="ocrProgressWrap" hidden style="margin-top:12px">
-<div class="mu" id="ocrStatusText">Processing invoice OCR...</div>
-<div class="ocr-progress"><div id="ocrBar" class="ocr-bar"></div></div>
+<div class="mu" id="ocrStatusText">Analyzing invoice with AI Vision...</div>
+<div class="ocr-progress"><div id="ocrBar" class="ocr-bar" style="width:60%"></div></div>
 </div>
-<div id="msg" class="mu" role="status" style="margin-top:10px">Ready. Snap or upload tax invoice photos, or add by hand.</div>
+<div id="msg" class="mu" role="status" style="margin-top:10px">Ready. Snap or upload an invoice photo for automated AI extraction.</div>
 </div>
 </section>
 
@@ -119,10 +119,10 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
 </dialog>
 
 <dialog id="reviewDlg">
-<h2 style="margin:0 0 4px;font-size:18px">Review Scanned Invoice Items</h2>
-<div class="mu" style="margin-bottom:8px">Verify and edit extracted invoice items below. Assign Rack locations before confirming.</div>
+<h2 style="margin:0 0 4px;font-size:18px">Review AI Extracted Items</h2>
+<div class="mu" style="margin-bottom:8px">Verify extracted details and assign Rack locations before saving.</div>
 <div style="background:var(--bg);padding:8px 12px;border-radius:8px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
-<span class="mu" style="font-weight:600">Calculated Invoice Total Amount:</span>
+<span class="mu" style="font-weight:600">Invoice Total Amount:</span>
 <span id="reviewTotalAmount" style="font-size:18px;font-weight:700;color:var(--ac)">₹0.00</span>
 </div>
 <div id="reviewListContainer" style="max-height:55vh;overflow-y:auto;padding-right:4px"></div>
@@ -133,17 +133,11 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
 </dialog>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
 <script>
-window.addEventListener('error', e => {
-  const m = document.getElementById('msg');
-  if (m) m.textContent = 'Script Error: ' + (e.message || e);
-});
-
 window.addEventListener('DOMContentLoaded', () => {
   const $ = id => document.getElementById(id);
   let items = [];
-  let pendingScannedItems = [];
+  let activeScanData = null;
 
   function msg(t) { const m = $('msg'); if (m) m.textContent = t || ''; }
   const num = v => { const n = parseFloat(v); return (isNaN(n) || !isFinite(n)) ? 0 : n; };
@@ -154,23 +148,19 @@ window.addEventListener('DOMContentLoaded', () => {
     try {
       const res = await fetch('/api/stock');
       if (res.ok) { items = await res.json(); renderStock(); }
-      else { msg('Warning: Could not fetch stock from server.'); }
-    } catch (e) {
-      msg('Server connection error.');
-    }
+    } catch (e) { msg('Failed to load stock from server.'); }
   }
 
   function tab(n) {
-    const p1 = $('p1'), p2 =$('p2'), t1 = $('t1'), t2 =$('t2');
+    const p1 = $('p1'), p2 = $('p2'), t1 = $('t1'), t2 = $('t2');
     if (p1) p1.hidden = (n !== 1);
     if (p2) p2.hidden = (n !== 2);
     if (t1) t1.setAttribute('aria-selected', n === 1);
     if (t2) t2.setAttribute('aria-selected', n === 2);
     if (n === 2) loadStock();
   }
-
-  if ($('t1'))$('t1').onclick = () => tab(1);
-  if ($('t2'))$('t2').onclick = () => tab(2);
+  if ($('t1')) $('t1').onclick = () => tab(1);
+  if ($('t2')) $('t2').onclick = () => tab(2);
 
   function renderStock() {
     const qEl = $('q');
@@ -192,39 +182,27 @@ window.addEventListener('DOMContentLoaded', () => {
     });
     const rowsEl = $('rows');
     if (rowsEl) rowsEl.innerHTML = html || '<tr><td colspan="9" class="empty">' + (items.length ? 'No item matches your search.' : 'No items in inventory yet.') + '</td></tr>';
-    
-    if ($('sI'))$('sI').textContent = items.length;
-    if ($('sQ'))$('sQ').textContent = fmt(items.reduce((a, x) => a + num(x.qty), 0));
-    if ($('sV'))$('sV').textContent = fmt(items.reduce((a, x) => a + (num(x.qty) * num(x.rate)), 0));
+    if ($('sI')) $('sI').textContent = items.length;
+    if ($('sQ')) $('sQ').textContent = fmt(items.reduce((a, x) => a + num(x.qty), 0));
+    if ($('sV')) $('sV').textContent = fmt(items.reduce((a, x) => a + (num(x.qty) * num(x.rate)), 0));
   }
-  
-  const qInput = $('q');
-  if (qInput) qInput.oninput = renderStock;
+  if ($('q')) $('q').oninput = renderStock;
 
   function openForm(o) {
-    if ($('dt'))$('dt').textContent = 'Add Item Manually';
-    if ($('fPart'))$('fPart').value = o.part || '';
-    if ($('fDesc'))$('fDesc').value = o.desc || '';
-    if ($('fHsn'))$('fHsn').value = o.hsn || '';
-    if ($('fRack'))$('fRack').value = o.rack || '';
-    if ($('fUnit'))$('fUnit').value = o.unit || 'Pcs';
-    if ($('fRate'))$('fRate').value = o.rate || '';
-    if ($('fQty'))$('fQty').value = o.qty || 1;
-    if ($('dn'))$('dn').textContent = 'Enter part number, description, and rack location.';
-    
-    const dlg = $('dlg');
-    if (dlg && typeof dlg.showModal === 'function') dlg.showModal();
+    if ($('dt')) $('dt').textContent = 'Add Item Manually';
+    if ($('fPart')) $('fPart').value = o.part || '';
+    if ($('fDesc')) $('fDesc').value = o.desc || '';
+    if ($('fHsn')) $('fHsn').value = o.hsn || '';
+    if ($('fRack')) $('fRack').value = o.rack || '';
+    if ($('fUnit')) $('fUnit').value = o.unit || 'Pcs';
+    if ($('fRate')) $('fRate').value = o.rate || '';
+    if ($('fQty')) $('fQty').value = o.qty || 1;
+    if ($('dlg')) $('dlg').showModal();
   }
-
-  const cancelBtn = $('cancel');
-  if (cancelBtn) cancelBtn.onclick = () => { const dlg = $('dlg'); if (dlg) dlg.close(); };
-
-  const saveBtn = $('save');
-  if (saveBtn) saveBtn.onclick = async () => {
-    const partEl = $('fPart');
-    const part = partEl ? partEl.value.trim() : '';
+  if ($('cancel')) $('cancel').onclick = () => $('dlg').close();
+  if ($('save')) $('save').onclick = async () => {
+    const part = $('fPart')?.value.trim() || '';
     if (!part) { alert('Enter a part number.'); return; }
-    
     const payload = {
       invoiceNo: 'MANUAL-' + Date.now(),
       invoiceDate: new Date().toISOString().slice(0, 10),
@@ -239,170 +217,85 @@ window.addEventListener('DOMContentLoaded', () => {
         rack: $('fRack')?.value.trim() || ''
       }]
     };
-    try {
-      const res = await fetch('/api/inward', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      if (res.ok) {
-        msg('Successfully added item!');
-        const dlg = $('dlg');
-        if (dlg) dlg.close();
-        loadStock();
-        tab(2);
-      } else {
-        const err = await res.json();
-        alert('Error: ' + (err.error || 'Failed to save'));
-      }
-    } catch (e) {
-      alert('Network error while saving: ' + e.message);
-    }
+    const res = await fetch('/api/inward', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (res.ok) { $('dlg').close(); loadStock(); tab(2); } else { alert('Save failed.'); }
   };
+  if ($('addBtn')) $('addBtn').onclick = () => openForm({ qty: 1, unit: 'Pcs' });
 
-  const addBtn = $('addBtn');
-  if (addBtn) addBtn.onclick = () => openForm({ qty: 1, unit: 'Pcs', hsn: '', rack: '' });
+  if ($('photoBtn') && $('file')) {
+    $('photoBtn').onclick = () => $('file').click();
+    $('file').onchange = async e => {
+      const f = e.target.files[0];
+      $('file').value = '';
+      if (!f) return;
 
-  const photoBtn = $('photoBtn');
-  const fileInput = $('file');
-  if (photoBtn && fileInput) {
-    photoBtn.onclick = () => fileInput.click();
-  }
-
-  if (fileInput) {
-    fileInput.onchange = async e => {
-      const files = Array.from(e.target.files || []);
-      fileInput.value = ''; 
-      if (!files.length) return;
-
-      const progressWrap = $('ocrProgressWrap');
-      if (progressWrap) progressWrap.hidden = false;
-      const totalFiles = files.length;
-      pendingScannedItems = [];
+      $('ocrProgressWrap').hidden = false;
+      msg('Uploading to AI Vision...');
 
       try {
-        for (let idx = 0; idx < totalFiles; idx++) {
-          const f = files[idx];
-          const pct = Math.round(((idx + 1) / totalFiles) * 80);
-          const bar = $('ocrBar');
-          if (bar) bar.style.width = pct + '%';
-          const statusText = $('ocrStatusText');
-          if (statusText) statusText.textContent = `Processing invoice page ${idx + 1} of ${totalFiles} (OCR)...`;
+        const reader = new FileReader();
+        const base64 = await new Promise((res) => {
+          reader.onload = () => res(reader.result.split(',')[1]);
+          reader.readAsDataURL(f);
+        });
 
-          const img = new Image();
-          img.src = URL.createObjectURL(f);
-          await new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
+        const res = await fetch('/api/extract', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: base64, media_type: f.type || 'image/jpeg' })
+        });
 
-          const worker = await Tesseract.createWorker('eng');
-          const ret = await worker.recognize(img);
-          await worker.terminate();
-
-          const text = (ret.data.text || '');
-          const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-          
-          // Smart filtering to exclude headers, addresses, totals, and garbage text
-          lines.forEach(line => {
-            const upper = line.toUpperCase();
-            if (
-              upper.includes('TAX') || upper.includes('INVOICE') || upper.includes('ADRES') || 
-              upper.includes('GSTIN') || upper.includes('TOTAL') || upper.includes('DATE') || 
-              upper.includes('PAGE') || upper.includes('STATE') || upper.includes('PAN') ||
-              upper.includes('DESCRIPTION') || upper.includes('HSN') || upper.includes('QTY') ||
-              upper.includes('RATE') || upper.includes('AMOUNT') || upper.length < 4
-            ) {
-              return;
-            }
-
-            const parts = line.split(/\s+/);
-            if (parts.length >= 2) {
-              const possiblePart = parts[0];
-              if (possiblePart.length >= 3 && !/^[0-9]+$/.test(possiblePart)) {
-                pendingScannedItems.push({
-                  part: possiblePart,
-                  desc: parts.slice(1).join(' ') || 'Scanned Item',
-                  hsn: '',
-                  qty: 1,
-                  unit: 'Pcs',
-                  rate: 0,
-                  rack: ''
-                });
-              }
-            }
-          });
+        $('ocrProgressWrap').hidden = true;
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || 'AI extraction failed');
         }
 
-        const uniqueMap = new Map();
-        pendingScannedItems.forEach(item => uniqueMap.set(item.part, item));
-        pendingScannedItems = Array.from(uniqueMap.values());
-
-        const bar = $('ocrBar');
-        if (bar) bar.style.width = '100%';
-        setTimeout(() => { const pw = $('ocrProgressWrap'); if (pw) pw.hidden = true; }, 400);
-
-        openReviewModal(pendingScannedItems);
-        msg(`Successfully scanned ${totalFiles} page(s). Please verify items.`);
+        activeScanData = await res.json();
+        openReviewModal(activeScanData);
+        msg('AI extraction successful!');
       } catch (err) {
-        const pw = $('ocrProgressWrap');
-        if (pw) pw.hidden = true;
-        alert('OCR processing error: ' + err.message);
+        $('ocrProgressWrap').hidden = true;
+        alert('Error: ' + err.message);
         msg('Scan failed.');
       }
     };
   }
 
   function updateReviewTotal() {
-    const cards = document.querySelectorAll('.review-card');
-    let totalAmt = 0;
-    cards.forEach(card => {
-      const q = num(card.querySelector('.rev-qty')?.value);
-      const r = num(card.querySelector('.rev-rate')?.value);
-      totalAmt += (q * r);
+    let total = 0;
+    document.querySelectorAll('.review-card').forEach(card => {
+      total += num(card.querySelector('.rev-qty')?.value) * num(card.querySelector('.rev-rate')?.value);
     });
-    const revTotal = $('reviewTotalAmount');
-    if (revTotal) revTotal.textContent = '₹ ' + fmt(totalAmt);
+    if ($('reviewTotalAmount')) $('reviewTotalAmount').textContent = '₹ ' + fmt(total);
   }
-
   window.updateReviewTotalCalc = updateReviewTotal;
 
-  function openReviewModal(scannedArray) {
-    pendingScannedItems = JSON.parse(JSON.stringify(scannedArray));
+  function openReviewModal(data) {
     const container = $('reviewListContainer');
     let html = '';
-
-    pendingScannedItems.forEach((item, idx) => {
-      html += '<div class="review-card" data-review-idx="' + idx + '" style="display:flex;gap:6px;align-items:center;flex-wrap:nowrap;overflow-x:auto;padding:6px;margin-bottom:6px;border:1px solid var(--bd);border-radius:8px;background:var(--bg)">';
-      html += '<div style="min-width:30px;font-weight:600;font-size:13px">#' + (idx + 1) + '</div>';
-      html += '<div style="flex:1.2;min-width:100px"><label style="font-size:11px;margin:0 0 2px">Part No.</label><input type="text" class="rev-part" value="' + esc(item.part) + '" style="padding:6px;font-size:13px"></div>';
-      html += '<div style="flex:1.8;min-width:140px"><label style="font-size:11px;margin:0 0 2px">Description</label><input type="text" class="rev-desc" value="' + esc(item.desc) + '" style="padding:6px;font-size:13px"></div>';
-      html += '<div style="flex:0.9;min-width:80px"><label style="font-size:11px;margin:0 0 2px">HSN</label><input type="text" class="rev-hsn" value="' + esc(item.hsn) + '" style="padding:6px;font-size:13px"></div>';
-      html += '<div style="flex:0.7;min-width:60px"><label style="font-size:11px;margin:0 0 2px">Qty</label><input type="number" step="any" class="rev-qty" value="' + num(item.qty) + '" style="padding:6px;font-size:13px" oninput="window.updateReviewTotalCalc()"></div>';
-      html += '<div style="flex:0.6;min-width:55px"><label style="font-size:11px;margin:0 0 2px">Unit</label><input type="text" class="rev-unit" value="' + esc(item.unit || 'Pcs') + '" style="padding:6px;font-size:13px"></div>';
-      html += '<div style="flex:0.9;min-width:80px"><label style="font-size:11px;margin:0 0 2px">Rate</label><input type="number" step="any" class="rev-rate" value="' + num(item.rate) + '" style="padding:6px;font-size:13px" oninput="window.updateReviewTotalCalc()"></div>';
-      html += '<div style="flex:0.8;min-width:70px"><label style="font-size:11px;margin:0 0 2px">Rack</label><input type="text" class="rev-rack" value="' + esc(item.rack || '') + '" placeholder="e.g. A1" style="padding:6px;font-size:13px"></div>';
-      html += '<div><button type="button" class="btn del" style="padding:6px 10px;font-size:12px;margin-top:16px" onclick="window.removeScannedRow(' + idx + ')">✕</button></div>';
+    (data.items || []).forEach((item, idx) => {
+      html += '<div class="review-card" style="display:flex;gap:6px;align-items:center;padding:6px;margin-bottom:6px;border:1px solid var(--bd);border-radius:8px;background:var(--bg)">';
+      html += '<div style="min-width:30px;font-weight:600">#' + (idx + 1) + '</div>';
+      html += '<div style="flex:1.2"><label style="font-size:11px">Part No.</label><input type="text" class="rev-part" value="' + esc(item.part) + '" style="padding:6px"></div>';
+      html += '<div style="flex:1.8"><label style="font-size:11px">Description</label><input type="text" class="rev-desc" value="' + esc(item.desc) + '" style="padding:6px"></div>';
+      html += '<div style="flex:0.9"><label style="font-size:11px">HSN</label><input type="text" class="rev-hsn" value="' + esc(item.hsn) + '" style="padding:6px"></div>';
+      html += '<div style="flex:0.7"><label style="font-size:11px">Qty</label><input type="number" step="any" class="rev-qty" value="' + num(item.qty) + '" style="padding:6px" oninput="window.updateReviewTotalCalc()"></div>';
+      html += '<div style="flex:0.6"><label style="font-size:11px">Unit</label><input type="text" class="rev-unit" value="' + esc(item.unit || 'Pcs') + '" style="padding:6px"></div>';
+      html += '<div style="flex:0.9"><label style="font-size:11px">Rate</label><input type="number" step="any" class="rev-rate" value="' + num(item.rate) + '" style="padding:6px" oninput="window.updateReviewTotalCalc()"></div>';
+      html += '<div style="flex:0.8"><label style="font-size:11px">Rack</label><input type="text" class="rev-rack" placeholder="A1" style="padding:6px"></div>';
       html += '</div>';
     });
-
-    if (container) container.innerHTML = html || '<div class="empty">No item rows detected. Please add items manually using the "+ Add by Hand" button.</div>';
+    if (container) container.innerHTML = html || '<div class="empty">No items detected.</div>';
     updateReviewTotal();
-    const revDlg = $('reviewDlg');
-    if (revDlg && typeof revDlg.showModal === 'function') revDlg.showModal();
+    if ($('reviewDlg')) $('reviewDlg').showModal();
   }
 
-  window.removeScannedRow = idx => {
-    pendingScannedItems.splice(idx, 1);
-    openReviewModal(pendingScannedItems);
-  };
+  if ($('cancelScanBtn')) $('cancelScanBtn').onclick = () => $('reviewDlg').close();
 
-  const cancelScanBtn = $('cancelScanBtn');
-  if (cancelScanBtn) cancelScanBtn.onclick = () => { const revDlg = $('reviewDlg'); if (revDlg) revDlg.close(); msg('Scan cancelled.'); };
-
-  const confirmScanBtn = $('confirmScanBtn');
-  if (confirmScanBtn) confirmScanBtn.onclick = async () => {
-    const cards = document.querySelectorAll('.review-card');
+  if ($('confirmScanBtn')) $('confirmScanBtn').onclick = async () => {
     const confirmedItems = [];
-
-    cards.forEach(card => {
+    document.querySelectorAll('.review-card').forEach(card => {
       confirmedItems.push({
         part: card.querySelector('.rev-part')?.value.trim() || '',
         desc: card.querySelector('.rev-desc')?.value.trim() || '',
@@ -414,49 +307,41 @@ window.addEventListener('DOMContentLoaded', () => {
       });
     });
 
-    if (!confirmedItems.length) { alert('Please keep at least one valid item.'); return; }
+    if (!confirmedItems.length) { alert('No items to confirm.'); return; }
 
     const payload = {
-      invoiceNo: 'SCAN-' + Date.now(),
-      invoiceDate: new Date().toISOString().slice(0, 10),
-      invoiceTotal: confirmedItems.reduce((a, x) => a + (x.qty * x.rate), 0),
+      invoiceNo: activeScanData?.invoice_no || 'AI-' + Date.now(),
+      invoiceDate: activeScanData?.invoice_date || new Date().toISOString().slice(0, 10),
+      invoiceTotal: activeScanData?.total || confirmedItems.reduce((a, x) => a + (x.qty * x.rate), 0),
       items: confirmedItems
     };
 
-    try {
-      const res = await fetch('/api/inward', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      if (res.ok) {
-        const revDlg = $('reviewDlg');
-        if (revDlg) revDlg.close();
-        msg('Successfully confirmed and saved scanned items to database!');
-        loadStock();
-        tab(2);
-      } else {
-        const err = await res.json();
-        alert('Save failed: ' + (err.error || 'Unknown error'));
-      }
-    } catch (e) {
-      alert('Network error while saving confirmed items.');
+    const res = await fetch('/api/inward', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (res.ok) {
+      $('reviewDlg').close();
+      msg('Successfully saved to database!');
+      loadStock();
+      tab(2);
+    } else {
+      alert('Failed to save items.');
     }
   };
 
-  const expBtn = $('exp');
-  if (expBtn) expBtn.onclick = async () => {
-    if (!items.length) { alert('No stock items to export.'); return; }
+  if ($('exp')) $('exp').onclick = async () => {
+    if (!items.length) { alert('No stock to export.'); return; }
     const rows = [['S.No.', 'Part Number', 'Description of Goods', 'HSN Code', 'Quantity', 'Unit', 'Rate', 'Amount', 'Rack']];
     items.forEach((x, i) => rows.push([i + 1, x.part, x.description, x.hsn, num(x.qty), x.unit || 'Pcs', num(x.rate), num(x.qty) * num(x.rate), x.rack || '']));
     const ws = XLSX.utils.aoa_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Stock_Inventory');
     const data = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    const name = 'Stock_Inventory_' + new Date().toISOString().slice(0, 10) + '.xlsx';
-    const u = URL.createObjectURL(new Blob([data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
-    const a = document.createElement('a'); a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(u), 4000);
+    const blob = new Blob([data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'Stock.xlsx'; a.click(); a.remove();
   };
 
   loadStock();
