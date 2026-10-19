@@ -1,38 +1,43 @@
 // Cloudflare Pages Function: POST /api/extract  { image: <base64>, media_type: "image/jpeg" }
-// Set ANTHROPIC_API_KEY in Pages > Settings > Environment variables (Secret).
 const PROMPT = `You are reading a supplier tax invoice. Extract every line item from the goods table.
 Return ONLY JSON, no markdown, in this shape:
 {"invoice_no":"","invoice_date":"YYYY-MM-DD or ''","total":number|null,
 "items":[{"part":"","desc":"","hsn":"","qty":number,"unit":"","rate":number}]}
 Rules:
-- The "Description of Goods/Service" cell is "<PartNumber> - <Description>". part = text before the FIRST "-", desc = text after it. If there is no "-", put everything in desc and leave part "".
-- hsn = the "HSN/SAC" column. qty = "Qty." column. unit = "Unit" column (e.g. NOS, PCS). rate = "Rate (Per Item)" column.
+- part = the part number or item code column.
+- desc = the description of goods.
+- hsn = the HSN/SAC code column.
+- qty = quantity column.
+- unit = unit column (e.g. PCS, NOS).
+- rate = rate per item column.
 - Numbers must be plain numbers without commas. Include every row, in order. Do not invent values; use "" or null if unreadable.`;
 
 export async function onRequestPost({ request, env }) {
   const h = { "Content-Type": "application/json" };
-  if (!env.ANTHROPIC_API_KEY) return new Response(JSON.stringify({ error: "ANTHROPIC_API_KEY not set" }), { status: 500, headers: h });
+  const apiKey = env.OPENAI_API_KEY || env.ANTHROPIC_API_KEY;
+  if (!apiKey) return new Response(JSON.stringify({ error: "AI API Key not set in Cloudflare Environment Variables" }), { status: 500, headers: h });
   
   try {
     const { image, media_type } = await request.json();
     if (!image) return new Response(JSON.stringify({ error: "No image provided" }), { status: 400, headers: h });
 
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
+    // Using OpenAI GPT-4o-mini for fast, accurate vision extraction
+    const r = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
-      headers: { "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      headers: { "Authorization": `Bearer ${apiKey}`, "content-type": "application/json" },
       body: JSON.stringify({
-        model: env.CLAUDE_MODEL || "claude-3-5-sonnet-20241022",
-        max_tokens: 4000,
+        model: "gpt-4o-mini",
         messages: [{ role: "user", content: [
-          { type: "image", source: { type: "base64", media_type: media_type || "image/jpeg", data: image } },
-          { type: "text", text: PROMPT } ] }]
+          { type: "text", text: PROMPT },
+          { type: "image_url", image_url: { url: `data:${media_type || "image/jpeg"};base64,${image}` } }
+        ]}]
       })
     });
     
     const d = await r.json();
     if (!r.ok) return new Response(JSON.stringify({ error: d.error?.message || "API error" }), { status: 502, headers: h });
     
-    const txt = (d.content || []).map(c => c.text || "").join("").replace(/```json|```/g, "").trim();
+    const txt = (d.choices[0]?.message?.content || "").replace(/```json|```/g, "").trim();
     const parsed = JSON.parse(txt);
     return new Response(JSON.stringify(parsed), { headers: h });
   } catch (err) {
