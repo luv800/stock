@@ -1,0 +1,2 @@
+   npx wrangler login
+   npx wrangler pages deploy Stock --project-name mangalamstock
