@@ -1,5 +1,5 @@
 // POST /api/extract  { image: <base64>, media_type: "image/jpeg" }
-// Uses OPENROUTER_API_KEY, else OPENAI_API_KEY, else ANTHROPIC_API_KEY.
+// Uses RAPID_API_KEY, else OPENAI_API_KEY, else ANTHROPIC_API_KEY.
 // Models can be overridden with OPENROUTER_MODEL / OPENAI_MODEL / ANTHROPIC_MODEL.
 const PROMPT = `You are reading a supplier tax invoice. Extract every line item from the goods table.
 Return ONLY a JSON object, no markdown, in this shape:
@@ -41,6 +41,8 @@ async function callOpenAICompatible(url, key, model, image, mediaType) {
     })
   });
   const d = await r.json().catch(() => ({}));
+  if (r.status === 401) throw new Error("AI API key is invalid or revoked. Create a new key and update RAPID_API_KEY / RAPID_API_KEY in Cloudflare.");
+  if (r.status === 402) throw new Error("AI account has no credits left. Add credits to your OpenRouter/OpenAI account.");
   if (!r.ok) throw new Error(d.error?.message || `AI error ${r.status}`);
   return d.choices?.[0]?.message?.content || "";
 }
@@ -87,8 +89,8 @@ function parse(txt) {
 }
 
 export async function onRequestPost({ request, env }) {
-  if (!env.OPENROUTER_API_KEY && !env.OPENAI_API_KEY && !env.ANTHROPIC_API_KEY)
-    return J({ error: "AI API key not set. Add OPENROUTER_API_KEY (or OPENAI_API_KEY / ANTHROPIC_API_KEY) in Cloudflare Pages environment variables." }, 500);
+  if (!env.RAPID_API_KEY && !env.OPENAI_API_KEY && !env.ANTHROPIC_API_KEY)
+    return J({ error: "AI API key not set. Add RAPID_API_KEY (or RAPID_API_KEY / ANTHROPIC_API_KEY) in Cloudflare Pages environment variables." }, 500);
 
   let body;
   try { body = await request.json(); } catch { return J({ error: "Invalid request body" }, 400); }
@@ -97,10 +99,10 @@ export async function onRequestPost({ request, env }) {
   const mediaType = /^image\/(jpeg|png|webp|gif)$/.test(media_type) ? media_type : "image/jpeg";
 
   try {
-    const txt = env.OPENROUTER_API_KEY
-      ? await callOpenAICompatible("https://openrouter.ai/api/v1/chat/completions", env.OPENROUTER_API_KEY, env.OPENROUTER_MODEL || "openai/gpt-4o-mini", image, mediaType)
+    const txt = env.RAPID_API_KEY
+      ? await callOpenAICompatible("https://rapidapi.com/nCoreFauG/api/rapid_api_key4", env.RAPID_API_KEY, env.OPENROUTER_MODEL || "openai/gpt-4o-mini", image, mediaType)
       : env.OPENAI_API_KEY
-        ? await callOpenAICompatible("https://api.openai.com/v1/chat/completions", env.OPENAI_API_KEY, env.OPENAI_MODEL || "gpt-4o-mini", image, mediaType)
+        ? await callOpenAICompatible("https://rapidapi.com/nCoreFauG/api/rapid_api_key4", env.RAPID_API_KEY, env.OPENAI_MODEL || "gpt-4o-mini", image, mediaType)
         : await callAnthropic(env, image, mediaType);
     return J(parse(txt));
   } catch (err) {
