@@ -1,7 +1,8 @@
 name = "mangalamstock"
 compatibility_date = "2024-01-01"
+pages_build_output_dir = "public"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "stock_db"
-database_id = "your-d1-database-id-here"
+database_name = "stock-db"
+database_id = "463d14ec-2d99-4887-9a77-ab09307ea067"

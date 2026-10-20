@@ -1,49 +1,109 @@
+// POST /api/extract  { image: <base64>, media_type: "image/jpeg" }
+// Uses OPENROUTER_API_KEY, else OPENAI_API_KEY, else ANTHROPIC_API_KEY.
+// Models can be overridden with OPENROUTER_MODEL / OPENAI_MODEL / ANTHROPIC_MODEL.
 const PROMPT = `You are reading a supplier tax invoice. Extract every line item from the goods table.
-Return ONLY JSON, no markdown, in this shape:
-{"invoice_no":"","invoice_date":"YYYY-MM-DD or ''","total":null,
-"items":[{"part":"","desc":"","hsn":"","qty":1,"unit":"PC","rate":0}]}
+Return ONLY a JSON object, no markdown, in this shape:
+{"invoice_no":"","invoice_date":"YYYY-MM-DD or ''","total":number|null,
+"items":[{"part":"","desc":"","hsn":"","qty":number,"unit":"","rate":number}]}
 Rules:
-- part = the exact text BEFORE the "-" symbol in the "Description of Goods / Services" column.
-- desc = the exact text AFTER the "-" symbol in the "Description of Goods / Services" column.
+- part = the part number or item code column.
+- desc = the description of goods.
 - hsn = the HSN/SAC code column.
-- qty = quantity column value as a number.
-- unit = unit column (e.g. PC, NOS).
-- rate = rate per item column value as a number.
-- Numbers must be plain numbers without commas. Include every row, in order. Do not invent values; use "" or null if unreadable.`;
+- qty = quantity column.
+- unit = unit column (e.g. PCS, NOS).
+- rate = rate per item column (before tax).
+- total = the grand total printed on the invoice.
+- Skip tax, freight, round-off and total rows; they are not items.
+- Numbers must be plain numbers without commas or currency symbols. Include every row, in order. Do not invent values; use "" or null if unreadable.`;
+
+const J = (o, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { "Content-Type": "application/json" } });
+
+const toNum = v => {
+  if (v == null || v === "") return null;
+  const n = Number(String(v).replace(/[,₹\s]/g, ""));
+  return Number.isFinite(n) ? n : null;
+};
+const str = v => String(v ?? "").trim();
+
+// OpenRouter uses the same request format as OpenAI.
+async function callOpenAICompatible(url, key, model, image, mediaType) {
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "X-Title": "Mangalam Stock Scanner" },
+    body: JSON.stringify({
+      model,
+      temperature: 0,
+      response_format: { type: "json_object" },
+      messages: [{ role: "user", content: [
+        { type: "text", text: PROMPT },
+        { type: "image_url", image_url: { url: `data:${mediaType};base64,${image}`, detail: "high" } }
+      ] }]
+    })
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error?.message || `AI error ${r.status}`);
+  return d.choices?.[0]?.message?.content || "";
+}
+
+async function callAnthropic(env, image, mediaType) {
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: env.ANTHROPIC_MODEL || "claude-sonnet-4-5",
+      max_tokens: 8192,
+      temperature: 0,
+      messages: [{ role: "user", content: [
+        { type: "image", source: { type: "base64", media_type: mediaType, data: image } },
+        { type: "text", text: PROMPT }
+      ] }]
+    })
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error?.message || `Anthropic error ${r.status}`);
+  return (d.content || []).filter(c => c.type === "text").map(c => c.text).join("");
+}
+
+function parse(txt) {
+  const s = txt.indexOf("{"), e = txt.lastIndexOf("}");
+  if (s < 0 || e <= s) throw new Error("AI did not return JSON");
+  const o = JSON.parse(txt.slice(s, e + 1));
+  const date = str(o.invoice_date);
+  return {
+    invoice_no: str(o.invoice_no),
+    invoice_date: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : "",
+    total: toNum(o.total),
+    items: (Array.isArray(o.items) ? o.items : [])
+      .map(i => ({
+        part: str(i.part),
+        desc: str(i.desc),
+        hsn: str(i.hsn).replace(/\s/g, ""),
+        qty: toNum(i.qty) ?? 0,
+        unit: str(i.unit) || "Pcs",
+        rate: toNum(i.rate) ?? 0
+      }))
+      .filter(i => i.part || i.desc)
+  };
+}
 
 export async function onRequestPost({ request, env }) {
-  const h = { "Content-Type": "application/json" };
-  const apiKey = env.OPENROUTER_API_KEY || env.OPENAI_API_KEY;
-  if (!apiKey) return new Response(JSON.stringify({ error: "API Key not set in Cloudflare Environment Variables" }), { status: 500, headers: h });
-  
-  try {
-    const { image, media_type } = await request.json();
-    if (!image) return new Response(JSON.stringify({ error: "No image provided" }), { status: 400, headers: h });
+  if (!env.OPENROUTER_API_KEY && !env.OPENAI_API_KEY && !env.ANTHROPIC_API_KEY)
+    return J({ error: "AI API key not set. Add OPENROUTER_API_KEY (or OPENAI_API_KEY / ANTHROPIC_API_KEY) in Cloudflare Pages environment variables." }, 500);
 
-    const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: { 
-        "Authorization": `Bearer ${apiKey}`, 
-        "HTTP-Referer": "https://mangalamstock.pages.dev",
-        "X-Title": "Stock Scanner",
-        "content-type": "application/json" 
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [{ role: "user", content: [
-          { type: "text", text: PROMPT },
-          { type: "image_url", image_url: { url: `data:${media_type || "image/jpeg"};base64,${image}` } }
-        ]}]
-      })
-    });
-    
-    const d = await r.json();
-    if (!r.ok) return new Response(JSON.stringify({ error: d.error?.message || "OpenRouter API error" }), { status: 502, headers: h });
-    
-    const txt = (d.choices[0]?.message?.content || "").replace(/```json|```/g, "").trim();
-    const parsed = JSON.parse(txt);
-    return new Response(JSON.stringify(parsed), { headers: h });
+  let body;
+  try { body = await request.json(); } catch { return J({ error: "Invalid request body" }, 400); }
+  const { image, media_type } = body || {};
+  if (!image) return J({ error: "No image provided" }, 400);
+  const mediaType = /^image\/(jpeg|png|webp|gif)$/.test(media_type) ? media_type : "image/jpeg";
+
+  try {
+    const txt = env.OPENROUTER_API_KEY
+      ? await callOpenAICompatible("https://openrouter.ai/api/v1/chat/completions", env.OPENROUTER_API_KEY, env.OPENROUTER_MODEL || "openai/gpt-4o-mini", image, mediaType)
+      : env.OPENAI_API_KEY
+        ? await callOpenAICompatible("https://api.openai.com/v1/chat/completions", env.OPENAI_API_KEY, env.OPENAI_MODEL || "gpt-4o-mini", image, mediaType)
+        : await callAnthropic(env, image, mediaType);
+    return J(parse(txt));
   } catch (err) {
-    return new Response(JSON.stringify({ error: "Extraction failed: " + err.message }), { status: 500, headers: h });
+    return J({ error: "Extraction failed: " + err.message }, 502);
   }
 }

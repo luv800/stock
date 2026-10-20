@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Stock Scanner (Invoice Scan + Manual + Excel)</title>
+<style>
+:root{--bg:#eef1f4;--card:#fff;--tx:#17212b;--mu:#5e6b78;--bd:#d5dbe1;--ac:#0f4c5c;--on:#fff;--hi:#e0a100;--dg:#b3261e;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12181e;--card:#1a232b;--tx:#e8edf2;--mu:#98a5b1;--bd:#2b3743;--ac:#5cc1d6;--on:#06222a;--hi:#f0b429;--dg:#ff8a80}}
+:root[data-theme="dark"]{--bg:#12181e;--card:#1a232b;--tx:#e8edf2;--mu:#98a5b1;--bd:#2b3743;--ac:#5cc1d6;--on:#06222a;--hi:#f0b429;--dg:#ff8a80}
+*,*::before,*::after{box-sizing:inherit}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:980px;margin:0 auto;padding:14px}
+h1{font-size:22px;margin:4px 0 12px}
+.tabs{display:flex;gap:6px;margin-bottom:12px}
+.tabs button{flex:1;padding:11px;border:1px solid var(--bd);background:var(--card);color:var(--tx);border-radius:8px;font:inherit;font-weight:600;cursor:pointer}
+.tabs button[aria-selected="true"]{background:var(--ac);color:var(--on);border-color:var(--ac)}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px;margin-bottom:12px}
+.btn{padding:11px 16px;border-radius:8px;border:1px solid var(--ac);background:var(--ac);color:var(--on);font:inherit;font-weight:600;cursor:pointer}
+.btn:disabled{opacity:.55;cursor:wait}
+.btn.alt{background:transparent;color:var(--ac)}
+.btn.del{background:transparent;color:var(--dg);border-color:var(--dg)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.mu{color:var(--mu);font-size:14px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+.stat{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:10px}
+.stat b{display:block;font-size:20px}
+.wrap{overflow-x:auto;border:1px solid var(--bd);border-radius:10px;background:var(--card)}
+table{border-collapse:collapse;width:100%;min-width:820px;font-size:14px}
+th,td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--bd);white-space:nowrap}
+th{background:var(--bg);font-weight:600;position:sticky;top:0}
+td.n,th.n{text-align:right}
+.empty{text-align:center;color:var(--mu);padding:24px}
+input,select{width:100%;padding:10px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--tx);font:inherit}
+input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+input[type=number]{-moz-appearance:textfield}
+label{display:block;font-size:13px;color:var(--mu);margin:8px 0 3px}
+dialog{border:1px solid var(--bd);border-radius:12px;background:var(--card);color:var(--tx);width:min(96vw,820px);max-height:90vh;padding:16px;overflow-y:auto}
+dialog::backdrop{background:rgba(0,0,0,.5)}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+#msg{min-height:20px;margin:8px 0 0}
+[hidden]{display:none!important}
+.ocr-progress{margin-top:8px;background:var(--bd);border-radius:6px;height:6px;overflow:hidden;width:100%}
+.ocr-bar{background:var(--ac);height:100%;width:0%;transition:width .2s}
+.review-card{display:flex;gap:6px;align-items:center;flex-wrap:nowrap;overflow-x:auto;padding:6px;margin-bottom:6px;border:1px solid var(--bd);border-radius:8px;background:var(--bg)}
+.review-card label{font-size:11px;margin:0 0 2px}
+.review-card input{padding:6px;font-size:13px}
+.sumbar{background:var(--bg);padding:8px 12px;border-radius:8px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<main>
+<h1>Stock Scanner <span class="mu" style="font-weight:400">(Scan + Manual + Excel)</span></h1>
+<div class="tabs" role="tablist">
+<button id="t1" role="tab" aria-selected="true" type="button">Scan / Add</button>
+<button id="t2" role="tab" aria-selected="false" type="button">Stock List</button>
+<button id="t3" role="tab" aria-selected="false" type="button">History</button>
+</div>
+
+<section id="p1">
+<div class="card">
+<div class="row">
+<button class="btn" id="photoBtn" type="button">📸 Scan Tax Invoice Photo(s)</button>
+<button class="btn alt" id="addBtn" type="button">+ Add by Hand</button>
+<button class="btn alt" id="impBtn" type="button">📂 Import Excel</button>
+</div>
+<input type="file" id="file" accept="image/*" multiple hidden>
+<input type="file" id="impFile" accept=".xlsx, .xls" hidden>
+<div id="ocrProgressWrap" hidden style="margin-top:12px">
+<div class="mu" id="ocrStatusText">Reading invoice...</div>
+<div class="ocr-progress"><div id="ocrBar" class="ocr-bar"></div></div>
+</div>
+<div id="msg" class="mu" role="status" style="margin-top:10px">Ready. Snap or upload tax invoice photos, add by hand, or import Excel.</div>
+</div>
+</section>
+
+<section id="p2" hidden>
+<div class="stats">
+<div class="stat"><span class="mu">Items</span><b id="sI">0</b></div>
+<div class="stat"><span class="mu">Total Quantity</span><b id="sQ">0</b></div>
+<div class="stat"><span class="mu">Stock Value</span><b id="sV">0</b></div>
+</div>
+<div class="row" style="margin-bottom:10px">
+<input id="q" placeholder="Search part number, description, HSN, unit or rack" style="flex:1;min-width:180px">
+<button class="btn" id="exp" type="button">Export Excel</button>
+</div>
+<div class="wrap">
+<table>
+<thead>
+<tr>
+<th>S.No.</th>
+<th>Part Number</th>
+<th>Description of Goods</th>
+<th>HSN Code</th>
+<th class="n">Quantity</th>
+<th>Unit</th>
+<th class="n">Rate</th>
+<th class="n">Amount</th>
+<th>Rack</th>
+</tr>
+</thead>
+<tbody id="rows"></tbody>
+</table>
+</div>
+</section>
+
+<section id="p3" hidden>
+<div class="wrap">
+<table>
+<thead>
+<tr>
+<th>Inward No.</th>
+<th>Invoice No.</th>
+<th>Invoice Date</th>
+<th class="n">Items</th>
+<th class="n">Invoice Total</th>
+<th>Saved At</th>
+</tr>
+</thead>
+<tbody id="hrows"></tbody>
+</table>
+</div>
+</section>
+</main>
+
+<dialog id="dlg">
+<h2 style="margin:0 0 4px;font-size:18px">Add Item Manually</h2>
+<div class="mu">Enter part number, description, and rack location.</div>
+<label for="fPart">Part Number</label><input id="fPart" autocomplete="off" placeholder="e.g. MH40939D3">
+<label for="fDesc">Description of Goods</label><input id="fDesc" autocomplete="off" placeholder="e.g. OUTER AIR ELEMENT">
+<div class="g2">
+<div><label for="fHsn">HSN Code</label><input id="fHsn" inputmode="numeric" autocomplete="off" placeholder="e.g. 84213990"></div>
+<div><label for="fRack">Rack Location</label><input id="fRack" autocomplete="off" placeholder="e.g. A1"></div>
+<div><label for="fQty">Quantity</label><input id="fQty" type="number" inputmode="decimal" step="any" value="1"></div>
+<div><label for="fUnit">Unit</label><input id="fUnit" list="units" autocomplete="off" value="Pcs"></div>
+<div><label for="fRate">Rate (Per Item)</label><input id="fRate" type="number" inputmode="decimal" step="any" placeholder="e.g. 1097.00"></div>
+</div>
+<datalist id="units"><option value="Pcs"><option value="Nos"><option value="PC"><option value="Set"><option value="Box"><option value="kg"><option value="Ltr"><option value="Mtr"></datalist>
+<div class="row" style="margin-top:14px">
+<button class="btn" id="save" type="button">Save Item</button>
+<button class="btn alt" id="cancel" type="button">Cancel</button>
+</div>
+</dialog>
+
+<dialog id="reviewDlg">
+<h2 style="margin:0 0 4px;font-size:18px">Review Scanned Invoice Items</h2>
+<div class="mu" style="margin-bottom:8px">Verify and edit extracted invoice items below. Assign Rack locations before confirming.</div>
+<div class="g2" style="margin-bottom:8px">
+<div><label for="revInv">Invoice No.</label><input id="revInv" autocomplete="off"></div>
+<div><label for="revDate">Invoice Date</label><input id="revDate" type="date"></div>
+</div>
+<div class="sumbar">
+<span class="mu" style="font-weight:600">Calculated Total (Qty × Rate):</span>
+<span id="reviewTotalAmount" style="font-size:18px;font-weight:700;color:var(--ac)">₹0.00</span>
+<span id="printedTotal" class="mu" style="width:100%"></span>
+</div>
+<div id="reviewListContainer" style="max-height:50vh;overflow-y:auto;padding-right:4px"></div>
+<button class="btn alt" id="addRowBtn" type="button" style="margin-top:4px">+ Add Row</button>
+<div class="row" style="margin-top:16px;border-top:1px solid var(--bd);padding-top:12px">
+<button class="btn" id="confirmScanBtn" type="button">✅ Confirm &amp; Save to Database</button>
+<button class="btn alt" id="cancelScanBtn" type="button">Cancel</button>
+</div>
+</dialog>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+window.addEventListener('DOMContentLoaded', () => {
+  const $ = id => document.getElementById(id);
+  let items = [];
+  let reviewItems = [];
+  let scanExtracted = [];
+
+  const msg = t => { $('msg').textContent = t || ''; };
+  const num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
+  const fmt = n => (Math.round(n * 100) / 100).toLocaleString('en-IN');
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const today = () => new Date().toISOString().slice(0, 10);
+
+  async function api(path, opts = {}) {
+    let tries = 0;
+    while (true) {
+      const headers = Object.assign({}, opts.headers);
+      const pin = localStorage.getItem('appPin');
+      if (pin) headers['x-pin'] = pin;
+      const res = await fetch(path, Object.assign({}, opts, { headers }));
+      if (res.status !== 401) {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || ('Server error ' + res.status));
+        return data;
+      }
+      if (++tries > 3) { localStorage.removeItem('appPin'); throw new Error('Wrong PIN'); }
+      const entered = prompt(pin ? 'Wrong PIN. Enter app PIN:' : 'Enter app PIN:');
+      if (entered === null) throw new Error('PIN required');
+      localStorage.setItem('appPin', entered.trim());
+    }
+  }
+  const post = (path, body) => api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
+  async function loadStock() {
+    try { items = await api('/api/stock'); renderStock(); }
+    catch (e) { msg('Failed to load stock: ' + e.message); }
+  }
+
+  async function loadHistory() {
+    try {
+      const txns = await api('/api/transactions');
+      $('hrows').innerHTML = txns.map(t =>
+        '<tr><td>' + esc(t.no) + '</td><td>' + esc(t.invoice_no) + '</td><td>' + esc(t.invoice_date) +
+        '</td><td class="n">' + num(t.items) + '</td><td class="n">' + (t.invoice_total == null ? '' : fmt(num(t.invoice_total))) +
+        '</td><td>' + esc(t.confirmed_at ? new Date(t.confirmed_at).toLocaleString('en-IN') : '') + '</td></tr>'
+      ).join('') || '<tr><td colspan="6" class="empty">No inward entries yet.</td></tr>';
+    } catch (e) {
+      $('hrows').innerHTML = '<tr><td colspan="6" class="empty">' + esc('Failed to load history: ' + e.message) + '</td></tr>';
+    }
+  }
+
+  function tab(n) {
+    [1, 2, 3].forEach(i => { $('p' + i).hidden = n !== i; $('t' + i).setAttribute('aria-selected', n === i); });
+    if (n === 2) loadStock();
+    if (n === 3) loadHistory();
+  }
+  $('t1').onclick = () => tab(1);
+  $('t2').onclick = () => tab(2);
+  $('t3').onclick = () => tab(3);
+
+  function renderStock() {
+    const f = $('q').value.trim().toLowerCase();
+    let html = '';
+    items.forEach((x, i) => {
+      const p = x.part || '', d = x.description || '', h = x.hsn || '', u = x.unit || 'Pcs', rk = x.rack || '';
+      const q = num(x.qty), r = num(x.rate);
+      if (f && ![p, d, h, u, rk].join(' ').toLowerCase().includes(f)) return;
+      html += '<tr><td>' + (i + 1) + '</td><td>' + esc(p) + '</td><td>' + esc(d) + '</td><td>' + esc(h) +
+        '</td><td class="n">' + fmt(q) + '</td><td>' + esc(u) + '</td><td class="n">' + fmt(r) +
+        '</td><td class="n">' + fmt(q * r) + '</td><td>' + esc(rk) + '</td></tr>';
+    });
+    $('rows').innerHTML = html || '<tr><td colspan="9" class="empty">' + (items.length ? 'No item matches your search.' : 'No items in inventory yet.') + '</td></tr>';
+    $('sI').textContent = items.length;
+    $('sQ').textContent = fmt(items.reduce((a, x) => a + num(x.qty), 0));
+    $('sV').textContent = fmt(items.reduce((a, x) => a + num(x.qty) * num(x.rate), 0));
+  }
+  $('q').oninput = renderStock;
+
+  async function saveInward(payload, okText) {
+    await post('/api/inward', payload);
+    msg(okText);
+    tab(2);
+  }
+
+  // ---------- Manual entry ----------
+  function openForm() {
+    $('fPart').value = ''; $('fDesc').value = ''; $('fHsn').value = ''; $('fRack').value = '';
+    $('fUnit').value = 'Pcs'; $('fRate').value = ''; $('fQty').value = 1;
+    $('dlg').showModal();
+  }
+  $('addBtn').onclick = openForm;
+  $('cancel').onclick = () => $('dlg').close();
+  $('save').onclick = async () => {
+    const part = $('fPart').value.trim();
+    if (!part) { alert('Enter a part number.'); return; }
+    const qty = num($('fQty').value);
+    if (qty <= 0) { alert('Quantity must be more than 0.'); return; }
+    const rate = num($('fRate').value);
+    $('save').disabled = true;
+    try {
+      await saveInward({
+        invoiceNo: 'MANUAL-' + Date.now(),
+        invoiceDate: today(),
+        invoiceTotal: qty * rate,
+        items: [{ part, desc: $('fDesc').value.trim(), hsn: $('fHsn').value.trim(), qty, unit: $('fUnit').value.trim() || 'Pcs', rate, rack: $('fRack').value.trim() }]
+      }, 'Successfully added item!');
+      $('dlg').close();
+    } catch (e) {
+      alert('Save failed: ' + e.message);
+    } finally {
+      $('save').disabled = false;
+    }
+  };
+
+  // ---------- Invoice scan (AI) ----------
+  function fileToJpegBase64(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const max = 2000;
+        const s = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.naturalWidth * s);
+        c.height = Math.round(img.naturalHeight * s);
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, c.width, c.height);
+        ctx.drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(url);
+        resolve(c.toDataURL('image/jpeg', 0.85).split(',')[1]);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not open image ' + file.name)); };
+      img.src = url;
+    });
+  }
+
+  $('photoBtn').onclick = () => $('file').click();
+  $('file').onchange = async e => {
+    const files = Array.from(e.target.files);
+    $('file').value = '';
+    if (!files.length) return;
+
+    $('photoBtn').disabled = true;
+    $('ocrProgressWrap').hidden = false;
+    $('ocrBar').style.width = '5%';
+    const found = [], errors = [];
+    const meta = { invoice_no: '', invoice_date: '', total: null };
+
+    for (let i = 0; i < files.length; i++) {
+      $('ocrStatusText').textContent = `Reading invoice page ${i + 1} of ${files.length}...`;
+      try {
+        const image = await fileToJpegBase64(files[i]);
+        const r = await post('/api/extract', { image, media_type: 'image/jpeg' });
+        if (!meta.invoice_no && r.invoice_no) meta.invoice_no = r.invoice_no;
+        if (!meta.invoice_date && r.invoice_date) meta.invoice_date = r.invoice_date;
+        if (r.total != null) meta.total = r.total;
+        (r.items || []).forEach(it => found.push({ part: it.part || '', desc: it.desc || '', hsn: it.hsn || '', qty: num(it.qty), unit: it.unit || 'Pcs', rate: num(it.rate), rack: '' }));
+      } catch (err) {
+        errors.push('Page ' + (i + 1) + ': ' + err.message);
+      }
+      $('ocrBar').style.width = Math.round(((i + 1) / files.length) * 100) + '%';
+    }
+
+    setTimeout(() => { $('ocrProgressWrap').hidden = true; }, 400);
+    $('photoBtn').disabled = false;
+
+    if (errors.length) alert('Some pages could not be read:\n' + errors.join('\n'));
+    if (errors.length === files.length) { msg('Scan failed. ' + errors[0]); return; }
+
+    scanExtracted = JSON.parse(JSON.stringify(found));
+    openReview(found, meta);
+    msg(`Read ${files.length - errors.length} of ${files.length} page(s), found ${found.length} item(s). Please verify.`);
+  };
+
+  function collectReview() {
+    reviewItems = Array.from(document.querySelectorAll('#reviewListContainer .review-card')).map(card => ({
+      part: card.querySelector('.rev-part').value.trim(),
+      desc: card.querySelector('.rev-desc').value.trim(),
+      hsn: card.querySelector('.rev-hsn').value.trim(),
+      qty: num(card.querySelector('.rev-qty').value),
+      unit: card.querySelector('.rev-unit').value.trim() || 'Pcs',
+      rate: num(card.querySelector('.rev-rate').value),
+      rack: card.querySelector('.rev-rack').value.trim()
+    }));
+    return reviewItems;
+  }
+
+  function updateReviewTotal() {
+    let total = 0;
+    document.querySelectorAll('#reviewListContainer .review-card').forEach(card => {
+      total += num(card.querySelector('.rev-qty').value) * num(card.querySelector('.rev-rate').value);
+    });
+    $('reviewTotalAmount').textContent = '₹ ' + fmt(total);
+  }
+
+  function field(cls, label, value, flex, minW, type, extra) {
+    return '<div style="flex:' + flex + ';min-width:' + minW + 'px"><label>' + label + '</label><input type="' + (type || 'text') + '" class="' + cls + '" value="' + esc(value) + '"' + (extra || '') + '></div>';
+  }
+
+  function renderReview() {
+    const html = reviewItems.map((it, idx) =>
+      '<div class="review-card">' +
+      '<div style="min-width:30px;font-weight:600;font-size:13px">#' + (idx + 1) + '</div>' +
+      field('rev-part', 'Part No.', it.part, 1.2, 100) +
+      field('rev-desc', 'Description', it.desc, 1.8, 140) +
+      field('rev-hsn', 'HSN', it.hsn, 0.9, 80) +
+      field('rev-qty', 'Qty', num(it.qty), 0.7, 60, 'number', ' step="any" inputmode="decimal"') +
+      field('rev-unit', 'Unit', it.unit || 'Pcs', 0.6, 55) +
+      field('rev-rate', 'Rate', num(it.rate), 0.9, 80, 'number', ' step="any" inputmode="decimal"') +
+      field('rev-rack', 'Rack', it.rack || '', 0.8, 70, 'text', ' placeholder="e.g. A1"') +
+      '<div><button type="button" class="btn del rev-del" data-idx="' + idx + '" style="padding:6px 10px;font-size:12px;margin-top:16px" aria-label="Remove row ' + (idx + 1) + '">✕</button></div>' +
+      '</div>'
+    ).join('');
+    $('reviewListContainer').innerHTML = html || '<div class="empty">No items detected. Use "+ Add Row" to enter them, or retake the photo more clearly.</div>';
+    updateReviewTotal();
+  }
+
+  function openReview(list, meta) {
+    reviewItems = list;
+    $('revInv').value = meta.invoice_no || '';
+    $('revDate').value = /^\d{4}-\d{2}-\d{2}$/.test(meta.invoice_date || '') ? meta.invoice_date : today();
+    $('printedTotal').textContent = meta.total != null ? 'Grand total printed on invoice: ₹ ' + fmt(meta.total) + ' (usually includes GST)' : '';
+    renderReview();
+    $('reviewDlg').showModal();
+  }
+
+  $('reviewListContainer').addEventListener('input', e => {
+    if (e.target.matches('.rev-qty, .rev-rate')) updateReviewTotal();
+  });
+  $('reviewListContainer').addEventListener('click', e => {
+    const b = e.target.closest('.rev-del');
+    if (!b) return;
+    collectReview();
+    reviewItems.splice(Number(b.dataset.idx), 1);
+    renderReview();
+  });
+  $('addRowBtn').onclick = () => {
+    collectReview();
+    reviewItems.push({ part: '', desc: '', hsn: '', qty: 1, unit: 'Pcs', rate: 0, rack: '' });
+    renderReview();
+    const parts = document.querySelectorAll('#reviewListContainer .rev-part');
+    if (parts.length) parts[parts.length - 1].focus();
+  };
+
+  $('cancelScanBtn').onclick = () => { $('reviewDlg').close(); msg('Scan cancelled.'); };
+
+  $('confirmScanBtn').onclick = async () => {
+    const all = collectReview();
+    const valid = all.filter(x => x.part && x.qty > 0);
+    if (!valid.length) { alert('Keep at least one item with a part number and quantity above 0.'); return; }
+    const skipped = all.length - valid.length;
+    if (skipped && !confirm(skipped + ' row(s) have no part number or zero quantity and will be skipped. Continue?')) return;
+
+    $('confirmScanBtn').disabled = true;
+    try {
+      await saveInward({
+        invoiceNo: $('revInv').value.trim() || 'SCAN-' + Date.now(),
+        invoiceDate: $('revDate').value || today(),
+        invoiceTotal: valid.reduce((a, x) => a + x.qty * x.rate, 0),
+        extracted: scanExtracted,
+        items: valid
+      }, 'Saved ' + valid.length + ' scanned item(s) to database!');
+      $('reviewDlg').close();
+    } catch (e) {
+      alert('Save failed: ' + e.message);
+    } finally {
+      $('confirmScanBtn').disabled = false;
+    }
+  };
+
+  // ---------- Excel import / export ----------
+  $('impBtn').onclick = () => $('impFile').click();
+  $('impFile').onchange = async e => {
+    const file = e.target.files[0];
+    $('impFile').value = '';
+    if (!file) return;
+    if (typeof XLSX === 'undefined') { alert('Excel library failed to load. Check your internet connection.'); return; }
+
+    let importedItems;
+    try {
+      const wb = XLSX.read(await file.arrayBuffer());
+      const rowsIn = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' });
+      importedItems = [];
+      // Expected columns (same as Export): S.No., Part Number, Description, HSN, Quantity, Unit, Rate, Amount, Rack
+      for (let i = 1; i < rowsIn.length; i++) {
+        const r = rowsIn[i];
+        const part = String(r[1] || '').trim();
+        if (!part || part.toLowerCase() === 'total') continue;
+        importedItems.push({
+          part,
+          desc: String(r[2] || '').trim(),
+          hsn: String(r[3] || '').trim(),
+          qty: num(r[4]) || 1,
+          unit: String(r[5] || 'Pcs').trim() || 'Pcs',
+          rate: num(r[6]),
+          rack: String(r[8] || '').trim()
+        });
+      }
+    } catch (err) {
+      alert('Could not read Excel file: ' + err.message);
+      return;
+    }
+    if (!importedItems.length) { alert('No valid items found in the Excel file.'); return; }
+
+    $('impBtn').disabled = true;
+    try {
+      await saveInward({
+        invoiceNo: 'EXCEL-IMP-' + Date.now(),
+        invoiceDate: today(),
+        invoiceTotal: importedItems.reduce((a, x) => a + x.qty * x.rate, 0),
+        items: importedItems
+      }, 'Successfully imported ' + importedItems.length + ' items!');
+    } catch (err) {
+      alert('Import save failed: ' + err.message);
+    } finally {
+      $('impBtn').disabled = false;
+    }
+  };
+
+  $('exp').onclick = () => {
+    if (!items.length) { alert('No stock items to export.'); return; }
+    if (typeof XLSX === 'undefined') { alert('Excel library failed to load. Check your internet connection.'); return; }
+    const rows = [['S.No.', 'Part Number', 'Description of Goods', 'HSN Code', 'Quantity', 'Unit', 'Rate', 'Amount', 'Rack']];
+    items.forEach((x, i) => rows.push([i + 1, x.part, x.description, x.hsn, num(x.qty), x.unit || 'Pcs', num(x.rate), num(x.qty) * num(x.rate), x.rack || '']));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Stock_Inventory');
+    XLSX.writeFile(wb, 'Stock_Inventory_' + today() + '.xlsx');
+  };
+
+  loadStock();
+});
+</script>
+</body>
+</html>
